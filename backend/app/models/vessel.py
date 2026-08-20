@@ -1,0 +1,1 @@
+"""Vessel schemas."""

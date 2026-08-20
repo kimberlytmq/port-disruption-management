@@ -1,0 +1,1 @@
+"""Fake terminal simulation environment."""
