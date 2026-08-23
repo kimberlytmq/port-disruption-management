@@ -3,3 +3,6 @@ uvicorn[standard]
 pydantic
 langgraph
 ortools
+langchain
+langchain-groq
+python-dotenv
