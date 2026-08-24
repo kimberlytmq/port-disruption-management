@@ -322,14 +322,14 @@ Seeded from a repo audit on 2026-08-22. **Update this table as work lands — it
 | Recovery agent | `backend/app/agents/recovery_agent.py` | Not Started |
 | LangGraph wiring | `backend/app/agents/graph.py`, `state.py` | Not Started |
 | Terminal tools | `backend/app/tools/terminal_tools.py` | Not Started |
-| Optimisation tools | `backend/app/tools/optimisation_tools.py` | Not Started |
+| Optimisation tools | `backend/app/tools/optimisation_tools.py` | Done — loads baseline state and exposes deterministic recovery-plan candidates |
 | Simulation tools | `backend/app/tools/simulation_tools.py` | Not Started |
 | Scenario tools | `backend/app/tools/scenario_tools.py` | Not Started |
-| Berth scheduler (OR-Tools) | `backend/app/optimizer/berth_scheduler.py`, `constraints.py`, `scoring.py` | Not Started |
+| Berth scheduler (OR-Tools) | `backend/app/optimizer/berth_scheduler.py`, `constraints.py`, `scoring.py` | Done — CP-SAT berth assignment, no-overlap, ETA-delay/crane-outage inputs, KPIs |
 | Simulation engine | `backend/app/simulation/terminal.py`, `disruptions.py`, `evaluator.py` | Not Started |
-| Data models | `backend/app/models/*.py` | Not Started |
+| Data models | `backend/app/models/*.py` | Partial — vessel, berth, crane and schedule schemas are implemented |
 | API routes | `backend/app/api/disruptions.py`, `terminal.py`, `plans.py` | Not Started (files exist, not wired into `main.py`) |
-| Scenario data | `scenarios/*.json` | Not Started (files exist with names/descriptions only, `disruptions: []` empty — needs population per §7) |
+| Scenario data | `scenarios/*.json` | Partial — baseline terminal state and three disruption event files are populated |
 | Frontend terminal/scenario views + components | `frontend/app/terminal/`, `frontend/app/scenarios/`, `frontend/app/components/` | Not Started (empty dirs) |
-| Tests | `backend/tests/*.py` | Not Started (files exist, no test cases) |
+| Tests | `backend/tests/*.py` | Partial — deterministic scheduler feasibility and disruption tests added |
 | `docs/architecture.md`, `product-concept.md`, `demo-script.md` | `docs/` | Not Started (1-line stubs) |

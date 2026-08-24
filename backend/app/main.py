@@ -22,6 +22,10 @@ class DisruptionEventDetail(BaseModel):
     type: str
     vessel_id: Optional[str] = None
     crane_id: Optional[str] = None
+    time: Optional[str] = None
+    old_eta: Optional[str] = None
+    new_eta: Optional[str] = None
+    expected_repair_time: Optional[str] = None
     delay_hours: Optional[float] = None
 
     @field_validator('type')
