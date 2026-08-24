@@ -7,8 +7,6 @@ function berthPosition(index: number, count: number): string {
   return `${margin + (span * (index + 0.5)) / count}%`;
 }
 
-const QUEUED_POSITION = "92%";
-
 export function TerminalMap({
   berths,
   vessels,
@@ -25,8 +23,8 @@ export function TerminalMap({
       <div className={styles.head}>
         <h2>Terminal map</h2>
         <div className={styles.legend}>
-          <span><i className={styles.lDelay} />Delayed / queued</span>
-          <span><i className={styles.lIdle} />Docked</span>
+          <span><i className={styles.lDelay} />Delayed</span>
+          <span><i className={styles.lIdle} />Docked / queued</span>
           <span><i className={styles.lBerth} />Berth</span>
         </div>
       </div>
@@ -34,7 +32,7 @@ export function TerminalMap({
         className={styles.map}
         role="img"
         aria-label={`Top-down schematic of the terminal. ${vessels
-          .map((v) => `${v.vessel_id} is ${v.status}${v.berth_id ? ` at ${v.berth_id}` : ", waiting for a berth"}`)
+          .map((v) => `${v.vessel_id} is ${v.status} at ${v.berth_id}${v.status === "queued" ? " (waiting for the berth to free up)" : ""}`)
           .join(". ")}.${craneAlert ? ` ${craneAlert.crane_id} is offline at ${craneAlert.berth_id}.` : ""}`}
       >
         <div className={styles.pier} />
@@ -53,19 +51,27 @@ export function TerminalMap({
         ))}
 
         {vessels.map((vessel) => {
-          const flagged = vessel.status !== "docked";
-          const left = vessel.berth_id ? positions.get(vessel.berth_id) : QUEUED_POSITION;
+          const left = positions.get(vessel.berth_id);
           const motionClass =
             vessel.status === "docked" ? styles.shipDocked : vessel.status === "queued" ? styles.shipQueued : styles.shipDelayed;
           const label =
-            vessel.status === "docked" ? "docked" : vessel.status === "queued" ? "queued" : `+${vessel.delay_hours}h`;
+            vessel.status === "docked"
+              ? "docked"
+              : vessel.status === "queued"
+                ? `queued for ${vessel.berth_id}`
+                : `+${vessel.delay_hours}h`;
+          const bottomOffset = vessel.status === "queued" ? 150 + (vessel.queueIndex - 1) * 46 : undefined;
 
           return (
-            <div key={vessel.vessel_id} className={`${styles.ship} ${motionClass}`} style={{ left }}>
-              <div className={`${styles.shipTag} ${flagged ? styles.shipTagFlagged : ""}`}>
+            <div
+              key={vessel.vessel_id}
+              className={`${styles.ship} ${motionClass}`}
+              style={{ left, bottom: bottomOffset }}
+            >
+              <div className={`${styles.shipTag} ${vessel.status === "delayed" ? styles.shipTagFlagged : ""}`}>
                 {vessel.vessel_id} · {label}
               </div>
-              <div className={`${styles.hull} ${flagged ? styles.hullFlagged : styles.hullIdle}`} />
+              <div className={`${styles.hull} ${vessel.status === "delayed" ? styles.hullFlagged : styles.hullIdle}`} />
             </div>
           );
         })}

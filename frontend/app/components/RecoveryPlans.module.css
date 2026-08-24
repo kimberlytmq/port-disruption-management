@@ -56,10 +56,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-.kpiDeltaPos {
+.kpiDelta {
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+.kpiDelta.pos {
   color: var(--good);
+}
+
+.kpiDelta.neg {
+  color: var(--critical);
 }
 
 .alt {
@@ -79,7 +86,8 @@
 .rec .desc { color: #b9c6d1; }
 .rec .kpiLabel { color: #96a7b5; }
 .rec .kpiValue { color: #ffffff; font-size: 1.7rem; }
-.rec .kpiDeltaPos { color: #6fd8ac; }
+.rec .kpiDelta.pos { color: #6fd8ac; }
+.rec .kpiDelta.neg { color: #ffb3a3; }
 
 .badge {
   font-size: 0.72rem;

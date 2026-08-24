@@ -48,6 +48,13 @@
   }
 }
 
+.sourceNote {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin: -0.9rem 0 1.1rem;
+}
+
 .sectionLabel {
   font-size: 0.82rem;
   font-weight: 700;

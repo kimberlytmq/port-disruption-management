@@ -7,9 +7,11 @@ import styles from "./ScenarioPicker.module.css";
 export function ScenarioPicker({
   activeId,
   onPlay,
+  loading,
 }: {
   activeId: ScenarioId;
   onPlay: (id: ScenarioId) => void;
+  loading?: boolean;
 }) {
   return (
     <div className={styles.picker} role="tablist" aria-label="Scenario">
@@ -18,6 +20,7 @@ export function ScenarioPicker({
           key={id}
           role="tab"
           aria-selected={id === activeId}
+          disabled={loading}
           className={`${styles.btn} ${id === activeId ? styles.btnActive : ""}`}
           onClick={() => onPlay(id)}
         >

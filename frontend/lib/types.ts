@@ -1,16 +1,19 @@
-// Shapes mirror the API contract in specs.md (§7-9), simplified for the
-// frontend's own presentation needs (e.g. Disruption carries a precomputed
-// headline/tag instead of raw fields, since it must cover several event
-// types). Swapping mock scenarios for real API data later means adapting
-// the backend response into this shape in lib/data.ts, not rewriting the UI.
+// Shapes mirror the real API contract in specs.md (§7-9) and the actual
+// backend response shapes verified against a running server. Disruption
+// carries a precomputed headline/tag (derived once in lib/derive.ts from the
+// raw event payload) rather than per-type fields, since one component needs
+// to render several event types without a big conditional.
 
 export type ScenarioId = "baseline" | "eta_delay" | "crane_failure" | "compound_disruption";
 
 export type AgentStepState = "done" | "active" | "pending";
 
-export interface AgentStep {
+export interface RawAgentStep {
   step: string;
   summary: string;
+}
+
+export interface AgentStep extends RawAgentStep {
   state: AgentStepState;
 }
 
@@ -20,10 +23,18 @@ export interface PlanKpis {
   crane_idle_pct: number;
 }
 
+export interface ScheduleEntry {
+  berth_id: string;
+  vessel_id: string;
+  start_time: string;
+  end_time: string;
+  cranes_used: number;
+}
+
 export interface RecoveryPlan {
   plan_id: string;
-  name: string;
   description: string;
+  schedule: ScheduleEntry[];
 }
 
 export interface Berth {
@@ -36,10 +47,12 @@ export type VesselStatus = "docked" | "delayed" | "queued";
 
 export interface VesselPosition {
   vessel_id: string;
-  // null when the vessel is queued/offshore and not yet assigned a berth.
-  berth_id: string | null;
+  berth_id: string;
   status: VesselStatus;
   delay_hours?: number;
+  // 0 = the current occupant (docked/delayed), 1+ = waiting in line for the
+  // same berth once it frees up.
+  queueIndex: number;
 }
 
 export interface CraneAlert {
@@ -47,10 +60,28 @@ export interface CraneAlert {
   crane_id: string;
 }
 
-export type DisruptionType = "VESSEL_DELAY" | "CRANE_FAILURE" | "YARD_CONGESTION" | "COMPOUND";
+export type DisruptionEventType = "VESSEL_DELAY" | "CRANE_FAILURE" | "YARD_CONGESTION";
+
+// Matches backend/app/main.py's DisruptionEventDetail exactly — every field
+// optional except type, since which fields apply depends on the event type.
+export interface DisruptionEvent {
+  type: DisruptionEventType;
+  vessel_id?: string;
+  crane_id?: string;
+  time?: string;
+  old_eta?: string;
+  new_eta?: string;
+  expected_repair_time?: string;
+  delay_hours?: number;
+}
+
+export interface DisruptionPayload {
+  scenario: string;
+  events: DisruptionEvent[];
+}
 
 export interface Disruption {
-  type: DisruptionType;
+  type: DisruptionEventType | "COMPOUND";
   headline: string;
   detail: string;
   tag: string;
@@ -61,6 +92,7 @@ export interface ScenarioData {
   id: ScenarioId;
   label: string;
   disruption: Disruption | null;
+  payload: DisruptionPayload | null;
   berths: Berth[];
   vessels: VesselPosition[];
   craneAlert: CraneAlert | null;

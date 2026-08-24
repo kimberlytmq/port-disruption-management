@@ -1,145 +1,217 @@
-import type { ScenarioData, ScenarioId } from "./types";
+import type { Berth, DisruptionPayload, PlanKpis, RecoveryPlan, ScenarioData, ScenarioId } from "./types";
+import { deriveVesselPositions, summarizeDisruption, toDisplaySteps } from "./derive";
 
-// Stand-in for the real scenario files in /scenarios and the backend's
-// POST /disruptions + GET /plans responses (see specs.md §7-9). Backend
-// tools are still hardcoded mocks too, so these numbers are illustrative,
-// not computed. Swap the source of a given scenario for a real fetch once
-// the backend returns live data — ScenarioData is the seam.
+// Everything in this file is a snapshot of the REAL backend, not invented:
+// - BERTHS is copied from scenarios/baseline.json.
+// - EVENT_PAYLOADS is copied from scenarios/{eta_delay,crane_failure,compound_disruption}.json.
+// - The `plans` / `metrics` per scenario were produced by actually running
+//   backend/app/optimizer/berth_scheduler.optimize_schedule(...) against
+//   scenarios/baseline.json + each event file (OR-Tools CP-SAT, real solve,
+//   not hand-picked numbers).
+// This is the fallback used when the live backend isn't reachable (see
+// lib/api.ts) — same shape either way, so the UI can't tell the difference.
 
-const BERTHS = [
+export const PLAN_LABELS: Record<string, string> = {
+  PLAN_MIN_WAIT: "Minimize Wait",
+  PLAN_PRIORITY: "Protect Priority",
+  PLAN_THROUGHPUT: "Minimize Completion",
+};
+
+const BERTHS: Berth[] = [
   { id: "B01", length: 400, cranes: ["QC01", "QC02", "QC03"] },
   { id: "B02", length: 350, cranes: ["QC04", "QC05"] },
+  { id: "B03", length: 280, cranes: ["QC06"] },
 ];
+
+const EVENT_PAYLOADS: Record<Exclude<ScenarioId, "baseline">, DisruptionPayload> = {
+  eta_delay: {
+    scenario: "ETA Delay",
+    events: [
+      { time: "2026-08-21T09:30:00", type: "VESSEL_DELAY", vessel_id: "VESSEL_A", old_eta: "2026-08-21T10:00:00", new_eta: "2026-08-21T14:00:00" },
+    ],
+  },
+  crane_failure: {
+    scenario: "Crane Failure",
+    events: [{ time: "2026-08-21T11:00:00", type: "CRANE_FAILURE", crane_id: "QC02", expected_repair_time: "2026-08-21T20:00:00" }],
+  },
+  compound_disruption: {
+    scenario: "Compound Disruption",
+    events: [
+      { time: "2026-08-21T09:30:00", type: "VESSEL_DELAY", vessel_id: "VESSEL_A", old_eta: "2026-08-21T10:00:00", new_eta: "2026-08-21T14:00:00" },
+      { time: "2026-08-21T11:00:00", type: "CRANE_FAILURE", crane_id: "QC02", expected_repair_time: "2026-08-21T20:00:00" },
+    ],
+  },
+};
+
+const BASELINE_PLAN: RecoveryPlan = {
+  plan_id: "PLAN_MIN_WAIT",
+  description: "Minimise average vessel waiting time.",
+  schedule: [
+    { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T10:00:00", end_time: "2026-08-22T16:00:00", cranes_used: 2 },
+    { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+    { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-21T15:00:00", end_time: "2026-08-21T21:45:00", cranes_used: 3 },
+    { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-21T21:45:00", end_time: "2026-08-22T11:15:00", cranes_used: 3 },
+  ],
+};
+const BASELINE_KPIS: PlanKpis = { avg_waiting_hours: 1.94, berth_utilization: 81.06, crane_idle_pct: 23.86 };
+
+const PLANS: Record<Exclude<ScenarioId, "baseline">, { plans: RecoveryPlan[]; metrics: Record<string, PlanKpis> }> = {
+  eta_delay: {
+    plans: [
+      {
+        plan_id: "PLAN_MIN_WAIT",
+        description: "Minimise average vessel waiting time.",
+        schedule: [
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T20:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-21T15:00:00", end_time: "2026-08-21T21:45:00", cranes_used: 3 },
+          { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-21T21:45:00", end_time: "2026-08-22T11:15:00", cranes_used: 3 },
+        ],
+      },
+      {
+        plan_id: "PLAN_THROUGHPUT",
+        description: "Minimise total schedule completion time.",
+        schedule: [
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B02", vessel_id: "VESSEL_C", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T10:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-21T15:00:00", end_time: "2026-08-21T21:45:00", cranes_used: 3 },
+          { berth_id: "B01", vessel_id: "VESSEL_A", start_time: "2026-08-21T21:45:00", end_time: "2026-08-22T17:45:00", cranes_used: 3 },
+        ],
+      },
+    ],
+    metrics: {
+      PLAN_MIN_WAIT: { avg_waiting_hours: 1.94, berth_utilization: 86.29, crane_idle_pct: 18.95 },
+      PLAN_THROUGHPUT: { avg_waiting_hours: 1.94, berth_utilization: 85.28, crane_idle_pct: 16.53 },
+    },
+  },
+  crane_failure: {
+    plans: [
+      {
+        plan_id: "PLAN_MIN_WAIT",
+        description: "Minimise average vessel waiting time.",
+        schedule: [
+          { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T10:00:00", end_time: "2026-08-22T16:00:00", cranes_used: 2 },
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-21T15:00:00", end_time: "2026-08-22T01:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-22T01:00:00", end_time: "2026-08-22T21:00:00", cranes_used: 2 },
+        ],
+      },
+      {
+        plan_id: "PLAN_THROUGHPUT",
+        description: "Minimise total schedule completion time.",
+        schedule: [
+          { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T10:00:00", end_time: "2026-08-22T16:00:00", cranes_used: 2 },
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T10:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-22T10:00:00", end_time: "2026-08-22T20:00:00", cranes_used: 2 },
+        ],
+      },
+    ],
+    metrics: {
+      PLAN_MIN_WAIT: { avg_waiting_hours: 2.75, berth_utilization: 85.71, crane_idle_pct: 14.29 },
+      PLAN_THROUGHPUT: { avg_waiting_hours: 4.75, berth_utilization: 88.24, crane_idle_pct: 11.76 },
+    },
+  },
+  compound_disruption: {
+    plans: [
+      {
+        plan_id: "PLAN_MIN_WAIT",
+        description: "Minimise average vessel waiting time.",
+        schedule: [
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T20:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-21T15:00:00", end_time: "2026-08-22T01:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-22T01:00:00", end_time: "2026-08-22T21:00:00", cranes_used: 2 },
+        ],
+      },
+      {
+        plan_id: "PLAN_THROUGHPUT",
+        description: "Minimise total schedule completion time.",
+        schedule: [
+          { berth_id: "B03", vessel_id: "VESSEL_B", start_time: "2026-08-21T13:00:00", end_time: "2026-08-22T19:00:00", cranes_used: 1 },
+          { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T10:00:00", cranes_used: 2 },
+          { berth_id: "B02", vessel_id: "VESSEL_A", start_time: "2026-08-21T14:00:00", end_time: "2026-08-22T20:00:00", cranes_used: 2 },
+          { berth_id: "B01", vessel_id: "VESSEL_D", start_time: "2026-08-22T10:00:00", end_time: "2026-08-22T20:00:00", cranes_used: 2 },
+        ],
+      },
+    ],
+    metrics: {
+      PLAN_MIN_WAIT: { avg_waiting_hours: 2.75, berth_utilization: 93.75, crane_idle_pct: 6.25 },
+      PLAN_THROUGHPUT: { avg_waiting_hours: 4.75, berth_utilization: 96.77, crane_idle_pct: 3.23 },
+    },
+  },
+};
+
+const STEP_SUMMARIES: Record<Exclude<ScenarioId, "baseline">, { step: string; summary: string }[]> = {
+  eta_delay: [
+    { step: "detect_disruption", summary: "VESSEL_A delay logged at 09:30." },
+    { step: "assess_impact", summary: "1 berth, 1 downstream vessel affected." },
+    { step: "generate_candidates", summary: "2 recovery plans produced." },
+    { step: "simulate_candidates", summary: "Checked plans against constraints." },
+    { step: "recommend_plan", summary: "Minimize Wait scored best on wait time." },
+    { step: "human_approval", summary: "Review the plans on the left." },
+    { step: "apply_plan", summary: "Updates the live schedule." },
+  ],
+  crane_failure: [
+    { step: "detect_disruption", summary: "QC02 fault code logged at 11:00." },
+    { step: "assess_impact", summary: "Berth B01 down to 2 of 3 cranes." },
+    { step: "generate_candidates", summary: "2 recovery plans produced." },
+    { step: "simulate_candidates", summary: "Checked plans against constraints." },
+    { step: "recommend_plan", summary: "Minimize Wait scored best overall." },
+    { step: "human_approval", summary: "Review the plans on the left." },
+    { step: "apply_plan", summary: "Updates the live schedule." },
+  ],
+  compound_disruption: [
+    { step: "detect_disruption", summary: "2 events logged: VESSEL_A delay, QC02 failure." },
+    { step: "assess_impact", summary: "2 berths, multiple vessels affected." },
+    { step: "generate_candidates", summary: "2 recovery plans produced." },
+    { step: "simulate_candidates", summary: "Checked plans against constraints." },
+    { step: "recommend_plan", summary: "Minimize Wait scored best overall." },
+    { step: "human_approval", summary: "Review the plans on the left." },
+    { step: "apply_plan", summary: "Updates the live schedule." },
+  ],
+};
+
+function buildScenario(id: Exclude<ScenarioId, "baseline">, label: string): ScenarioData {
+  const payload = EVENT_PAYLOADS[id];
+  const { disruption, craneAlert, delayedHours } = summarizeDisruption(payload.events, BERTHS);
+  const { plans, metrics } = PLANS[id];
+  const recommendedPlanId = plans[0].plan_id;
+
+  return {
+    id,
+    label,
+    disruption,
+    payload,
+    berths: BERTHS,
+    vessels: deriveVesselPositions(plans[0].schedule, delayedHours),
+    craneAlert,
+    agentSteps: toDisplaySteps(STEP_SUMMARIES[id]),
+    candidatePlans: plans,
+    planKpis: metrics,
+    recommendedPlanId,
+    baselineKpis: BASELINE_KPIS,
+  };
+}
 
 export const SCENARIOS: Record<ScenarioId, ScenarioData> = {
   baseline: {
     id: "baseline",
     label: "Normal Operations",
     disruption: null,
+    payload: null,
     berths: BERTHS,
-    vessels: [
-      { vessel_id: "VESSEL_A", berth_id: "B01", status: "docked" },
-      { vessel_id: "VESSEL_B", berth_id: "B02", status: "docked" },
-    ],
+    vessels: deriveVesselPositions(BASELINE_PLAN.schedule, {}),
     craneAlert: null,
     agentSteps: [],
     candidatePlans: [],
     planKpis: {},
     recommendedPlanId: null,
-    baselineKpis: { avg_waiting_hours: 1.1, berth_utilization: 74, crane_idle_pct: 11 },
+    baselineKpis: BASELINE_KPIS,
   },
-
-  eta_delay: {
-    id: "eta_delay",
-    label: "ETA Delay",
-    disruption: {
-      type: "VESSEL_DELAY",
-      headline: "VESSEL_A is running 4h late",
-      detail: "New ETA 14:00 at Berth B01, originally 10:00",
-      tag: "+4h",
-      detected_at: "09:30",
-    },
-    berths: BERTHS,
-    vessels: [
-      { vessel_id: "VESSEL_A", berth_id: "B01", status: "delayed", delay_hours: 4 },
-      { vessel_id: "VESSEL_B", berth_id: "B02", status: "docked" },
-    ],
-    craneAlert: null,
-    agentSteps: [
-      { step: "detect_disruption", summary: "VESSEL_A delay logged at 09:30.", state: "done" },
-      { step: "assess_impact", summary: "1 berth, 1 downstream vessel affected.", state: "done" },
-      { step: "generate_candidates", summary: "2 recovery plans produced.", state: "done" },
-      { step: "simulate_candidates", summary: "Checked plans against constraints.", state: "done" },
-      { step: "recommend_plan", summary: "Plan B scored best on wait time.", state: "done" },
-      { step: "human_approval", summary: "Review the plans on the left.", state: "active" },
-      { step: "apply_plan", summary: "Updates the live schedule.", state: "pending" },
-    ],
-    candidatePlans: [
-      { plan_id: "PLAN_B_SWAP", name: "Plan B — Swap", description: "Swap berth allocation for Vessel A and Vessel B." },
-      { plan_id: "PLAN_A_PUSH", name: "Plan A — Push", description: "Push all vessels back by 4 hours." },
-    ],
-    planKpis: {
-      PLAN_B_SWAP: { avg_waiting_hours: 1.2, berth_utilization: 85.5, crane_idle_pct: 14 },
-      PLAN_A_PUSH: { avg_waiting_hours: 4.5, berth_utilization: 78, crane_idle_pct: 22 },
-    },
-    recommendedPlanId: "PLAN_B_SWAP",
-    baselineKpis: { avg_waiting_hours: 5.8, berth_utilization: 71, crane_idle_pct: 27 },
-  },
-
-  crane_failure: {
-    id: "crane_failure",
-    label: "Crane Failure",
-    disruption: {
-      type: "CRANE_FAILURE",
-      headline: "QC02 has gone offline at Berth B01",
-      detail: "Estimated repair time 3h — 2 of 3 cranes remain in service",
-      tag: "1 down",
-      detected_at: "11:05",
-    },
-    berths: BERTHS,
-    vessels: [
-      { vessel_id: "VESSEL_A", berth_id: "B01", status: "docked" },
-      { vessel_id: "VESSEL_B", berth_id: "B02", status: "docked" },
-    ],
-    craneAlert: { berth_id: "B01", crane_id: "QC02" },
-    agentSteps: [
-      { step: "detect_disruption", summary: "QC02 fault code logged at 11:05.", state: "done" },
-      { step: "assess_impact", summary: "Berth B01 throughput cut by roughly a third.", state: "done" },
-      { step: "generate_candidates", summary: "2 recovery plans produced.", state: "done" },
-      { step: "simulate_candidates", summary: "Checked plans against constraints.", state: "done" },
-      { step: "recommend_plan", summary: "Reroute scored best on wait time.", state: "done" },
-      { step: "human_approval", summary: "Review the plans on the left.", state: "active" },
-      { step: "apply_plan", summary: "Updates the live schedule.", state: "pending" },
-    ],
-    candidatePlans: [
-      { plan_id: "PLAN_C_REROUTE", name: "Plan C — Reroute", description: "Reroute Vessel A's remaining moves to QC01 and QC03." },
-      { plan_id: "PLAN_D_HOLD", name: "Plan D — Hold", description: "Hold Vessel A at berth until QC02 is repaired." },
-    ],
-    planKpis: {
-      PLAN_C_REROUTE: { avg_waiting_hours: 1.8, berth_utilization: 80, crane_idle_pct: 20 },
-      PLAN_D_HOLD: { avg_waiting_hours: 3.9, berth_utilization: 68, crane_idle_pct: 35 },
-    },
-    recommendedPlanId: "PLAN_C_REROUTE",
-    baselineKpis: { avg_waiting_hours: 3.2, berth_utilization: 74, crane_idle_pct: 35 },
-  },
-
-  compound_disruption: {
-    id: "compound_disruption",
-    label: "Compound Disruption",
-    disruption: {
-      type: "COMPOUND",
-      headline: "2 simultaneous events: VESSEL_A delay + QC02 failure",
-      detail: "VESSEL_A running 4h late while Berth B01 is down a crane",
-      tag: "2 events",
-      detected_at: "09:45",
-    },
-    berths: BERTHS,
-    vessels: [
-      { vessel_id: "VESSEL_A", berth_id: "B01", status: "delayed", delay_hours: 4 },
-      { vessel_id: "VESSEL_B", berth_id: "B02", status: "docked" },
-      { vessel_id: "VESSEL_C", berth_id: null, status: "queued" },
-    ],
-    craneAlert: { berth_id: "B01", crane_id: "QC02" },
-    agentSteps: [
-      { step: "detect_disruption", summary: "2 events logged: VESSEL_A delay, QC02 failure.", state: "done" },
-      { step: "assess_impact", summary: "2 berths, 2 downstream vessels affected.", state: "done" },
-      { step: "generate_candidates", summary: "2 recovery plans produced.", state: "done" },
-      { step: "simulate_candidates", summary: "Checked plans against constraints.", state: "done" },
-      { step: "recommend_plan", summary: "Full re-optimize scored best overall.", state: "done" },
-      { step: "human_approval", summary: "Review the plans on the left.", state: "active" },
-      { step: "apply_plan", summary: "Updates the live schedule.", state: "pending" },
-    ],
-    candidatePlans: [
-      { plan_id: "PLAN_E_REOPT", name: "Plan E — Re-optimize", description: "Swap B01/B02 assignments and reroute cranes terminal-wide." },
-      { plan_id: "PLAN_F_PARTIAL", name: "Plan F — Partial", description: "Push Vessel A back only; leave crane assignments unchanged." },
-    ],
-    planKpis: {
-      PLAN_E_REOPT: { avg_waiting_hours: 2.6, berth_utilization: 88, crane_idle_pct: 16 },
-      PLAN_F_PARTIAL: { avg_waiting_hours: 5.1, berth_utilization: 73, crane_idle_pct: 30 },
-    },
-    recommendedPlanId: "PLAN_E_REOPT",
-    baselineKpis: { avg_waiting_hours: 7.4, berth_utilization: 62, crane_idle_pct: 38 },
-  },
+  eta_delay: buildScenario("eta_delay", "ETA Delay"),
+  crane_failure: buildScenario("crane_failure", "Crane Failure"),
+  compound_disruption: buildScenario("compound_disruption", "Compound Disruption"),
 };
 
 export const SCENARIO_ORDER: ScenarioId[] = ["baseline", "eta_delay", "crane_failure", "compound_disruption"];
