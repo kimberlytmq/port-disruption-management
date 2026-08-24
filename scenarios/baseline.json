@@ -1,5 +1,15 @@
 {
   "name": "baseline",
   "description": "Normal port operations",
-  "disruptions": []
+  "berths": [
+    {"id": "B01", "length": 400, "cranes": ["QC01", "QC02", "QC03"]},
+    {"id": "B02", "length": 350, "cranes": ["QC04", "QC05"]},
+    {"id": "B03", "length": 280, "cranes": ["QC06"]}
+  ],
+  "vessels": [
+    {"id": "VESSEL_A", "eta": "2026-08-21T10:00:00", "move_count": 1800, "length": 300, "priority": 2},
+    {"id": "VESSEL_B", "eta": "2026-08-21T13:00:00", "move_count": 900, "length": 250, "priority": 1},
+    {"id": "VESSEL_C", "eta": "2026-08-21T14:00:00", "move_count": 1200, "length": 270, "priority": 3},
+    {"id": "VESSEL_D", "eta": "2026-08-21T15:00:00", "move_count": 600, "length": 220, "priority": 2}
+  ]
 }

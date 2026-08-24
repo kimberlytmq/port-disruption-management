@@ -1,5 +1,6 @@
 {
-  "name": "eta_delay",
-  "description": "Vessel arrival delays",
-  "disruptions": []
+  "scenario": "ETA Delay",
+  "events": [
+    {"time": "2026-08-21T09:30:00", "type": "VESSEL_DELAY", "vessel_id": "VESSEL_A", "old_eta": "2026-08-21T10:00:00", "new_eta": "2026-08-21T14:00:00"}
+  ]
 }
