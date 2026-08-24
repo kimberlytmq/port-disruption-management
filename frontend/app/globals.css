@@ -1,0 +1,57 @@
+:root {
+  --bg: #f2f3ee;
+  --surface: #ffffff;
+  --surface-sunken: #e9ebe4;
+  --border: #dcdfd6;
+  --text: #12181d;
+  --text-dim: #5b6560;
+  --navy: #16324f;
+  --navy-deep: #0e2338;
+  --good: #1f7a5c;
+  --good-soft: #e2f0e9;
+  --critical: #b8462f;
+  --critical-soft: #f7e6e0;
+  --water-a: #c7dee4;
+  --water-b: #aecdd6;
+  --pier: #1e2c38;
+  --ship-idle: #7f8b96;
+
+  --font-display: var(--font-bricolage), "Bricolage Grotesque", sans-serif;
+  --font-body: var(--font-schibsted), "Schibsted Grotesk", sans-serif;
+  --font-mono: var(--font-jetbrains), "JetBrains Mono", monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

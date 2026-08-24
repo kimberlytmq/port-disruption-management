@@ -1,0 +1,205 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem 1.1rem 0;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.9rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.head h2 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.legend {
+  display: flex;
+  gap: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.lDelay { background: var(--critical); }
+.lIdle { background: var(--ship-idle); }
+.lBerth { background: var(--pier); }
+
+.map {
+  position: relative;
+  height: 300px;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--water-a), var(--water-b));
+}
+
+.map::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.35) 0px,
+    rgba(255, 255, 255, 0.35) 2px,
+    transparent 2px,
+    transparent 46px
+  );
+  animation: waterDrift 14s linear infinite;
+  opacity: 0.7;
+}
+
+@keyframes waterDrift {
+  from { background-position: 0 0; }
+  to { background-position: 240px 140px; }
+}
+
+.pier {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 78px;
+  background: var(--pier);
+}
+
+.pier::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: repeating-linear-gradient(90deg, #2c3f4f 0 18px, #26374590 18px 20px);
+}
+
+.berthTag {
+  position: absolute;
+  bottom: 10px;
+  color: #cfd8de;
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  transform: translateX(-50%);
+  transition: left 1s ease;
+}
+
+.berthTag small {
+  color: #8a97a1;
+  font-weight: 500;
+  font-size: 0.72rem;
+}
+
+.craneAlert {
+  color: var(--critical);
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+
+.berthGuide {
+  position: absolute;
+  bottom: 78px;
+  width: 2px;
+  background: repeating-linear-gradient(180deg, #ffffffb0 0 6px, transparent 6px 12px);
+  transform: translateX(-50%);
+  transition: left 1s ease;
+}
+
+.ship {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+  transition: left 1.1s ease, bottom 1.1s ease;
+}
+
+.shipTag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--navy-deep);
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.15rem 0.5rem;
+  border-radius: 5px;
+  margin-bottom: 0.35rem;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.shipTagFlagged {
+  color: var(--critical);
+}
+
+.hull {
+  width: 78px;
+  height: 30px;
+  clip-path: polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%);
+  position: relative;
+}
+
+.hull::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  right: 16px;
+  width: 22px;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 2px;
+}
+
+.hullIdle { background: var(--ship-idle); }
+.hullFlagged { background: var(--navy); }
+
+.shipDocked {
+  bottom: 84px;
+  animation: bob 4s ease-in-out infinite;
+}
+
+.shipDelayed {
+  bottom: 168px;
+  animation: approach 7s ease-in-out infinite;
+}
+
+.shipQueued {
+  bottom: 214px;
+  animation: queueBob 5s ease-in-out infinite;
+}
+
+@keyframes queueBob {
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, -6px); }
+}
+
+@keyframes bob {
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, -5px); }
+}
+
+@keyframes approach {
+  0%   { transform: translate(calc(-50% + 0px), 0) rotate(-2deg); }
+  50%  { transform: translate(calc(-50% + 14px), -8px) rotate(1deg); }
+  100% { transform: translate(calc(-50% + 0px), 0) rotate(-2deg); }
+}

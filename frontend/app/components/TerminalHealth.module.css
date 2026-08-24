@@ -1,0 +1,45 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.3rem 1.4rem;
+  opacity: 0;
+  animation: healthIn 0.6s ease 500ms forwards;
+}
+
+@keyframes healthIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  margin-bottom: 0.3rem;
+}
+
+.sub {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 1.2rem;
+}
+
+.kpis {
+  display: flex;
+  gap: 2rem;
+}
+
+.kpiLabel {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 0.15rem;
+}
+
+.kpiValue {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--good);
+}
