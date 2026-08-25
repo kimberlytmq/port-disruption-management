@@ -159,6 +159,25 @@ START
 
 This is intentionally four agents, not an open-ended multi-agent system — enough to demonstrate real agentic behavior (tool selection, sequential reasoning, re-optimization) without becoming unmaintainable.
 
+**As implemented:** `graph.py` wires all 8 nodes exactly in this order and compiles with plain `StateGraph(...).compile()`. `detect_disruption`, `assess_impact`, and `generate_candidates` call real tool functions (§5); `simulate_candidates` and `evaluate_candidates` are currently placeholder nodes that only append a log entry to `agent_steps` — they don't call `simulation/` or produce real KPIs yet. `human_approval` is also placeholder: it logs "awaiting approval" but does **not** actually pause the graph — `apply_plan` runs immediately after in the same synchronous call. This means `POST /approve` currently just records a flag on `active_run_state` after the fact; it doesn't gate execution. Fixing this (e.g. via LangGraph's `interrupt_before`, or splitting the graph into two invocations around `human_approval`) is needed before the approval step is real.
+
+**Agent State (`state.py`)** — the actual shared `AgentState` TypedDict every node reads/writes:
+```python
+class AgentState(TypedDict):
+    status: str                                   # "in_progress" | "completed"
+    disruption_summary: Optional[str]
+    disruption_event: Dict[str, Any]              # raw DisruptionPayload, see §7/§8
+    agent_steps: List[Dict[str, str]]             # [{ "step": ..., "summary": ... }, ...] — drives the frontend activity feed
+    impact_graph: Optional[Dict[str, Any]]
+    candidate_plans: Optional[List[Dict[str, Any]]]
+    plan_kpis: Optional[Dict[str, Any]]
+    recommended_plan: Optional[Dict[str, Any]]
+    final_explanation: Optional[str]               # LLM-written narration, see below
+    human_approval: Optional[bool]
+```
+
+**Recovery agent LLM:** `recommend_plan` calls **Groq** (`langchain-groq`, model `openai/gpt-oss-120b`, `temperature=0.0`) to turn the already-decided plan + KPIs into a plain-English explanation — it does not pick the plan (the optimizer tool's deterministic sort already did that) and is prompted explicitly not to invent numbers, consistent with the rule in §5. Requires a `GROQ_API_KEY` loaded via `python-dotenv`/`.env`. **`.env.example` still only has `API_HOST`/`API_PORT` — add `GROQ_API_KEY=` to it.**
+
 ## 5. Tool Contract (`backend/app/tools/`)
 
 Agents only ever affect the world by calling these tools. Every tool signature below is the contract other components build against — define it once, keep the signature stable, wire the real implementation in behind it.
@@ -177,9 +196,14 @@ Agents only ever affect the world by calling these tools. Every tool signature b
 
 **Rule:** the optimizer and simulator produce all numeric KPIs. The LLM reasons over tool outputs and explains them in natural language — it never generates a waiting-time or utilization figure itself.
 
+**As implemented today, two of these nine tools exist — one real, one still a mock:**
+- `generate_recovery_plans(event_payload, terminal_state=None)` (`optimisation_tools.py`) — **real.** Loads `scenarios/baseline.json` as the terminal state when the caller doesn't supply one (keeps the agent's existing one-argument call working), then calls `optimizer/berth_scheduler.optimize_schedule` for an actual OR-Tools CP-SAT solve. Returns up to 3 feasible plans (`PLAN_MIN_WAIT`, `PLAN_PRIORITY`, `PLAN_THROUGHPUT` — see §9), sorted by `avg_waiting_hours`. Satisfies the determinism requirement (§9) with genuine computation, not hardcoded numbers.
+- `assess_disruption(event_payload)` (`terminal_tools.py`) — still a **mock**: ignores its input entirely and always returns the same fixed dict (`affected_berths: ["B01"]`, `delayed_downstream_vessels: ["VESSEL_B"]`, `yard_congestion_warning: true`). Explicitly marked `STUB`/`TODO` in the code — needs to actually read terminal state and compute impact from the real event.
+- `get_vessel`, `get_terminal_state`, `get_berth_schedule`, `get_crane_availability`, `simulate_plan`, `optimize_berth_schedule`, `apply_recovery_plan` — none of these exist yet as standalone tools (`optimize_berth_schedule`'s job is effectively done by `generate_recovery_plans` today).
+
 ## 6. Data Models (`backend/app/models/`)
 
-Pydantic schemas, inferred from the scenario examples in §7:
+Pydantic schemas, inferred from the scenario examples in §7. **Implemented** for `Vessel`, `Berth`, `Crane`, and `ScheduleEntry` (exported from `models/__init__.py`) — with field validation this doc didn't originally specify (`move_count`/`length` must be `> 0`, `priority` defaults to `3` and must be `≥ 1`, `1` = highest priority; `ScheduleEntry` also carries a `cranes_used: int` field). **`Yard` is still just a docstring stub** (`yard.py` has no fields, isn't exported) — nothing in the optimizer or API currently models yard capacity/congestion, consistent with the `YARD_CONGESTION` gap noted in §7. Nothing yet imports these models: `main.py` validates requests with its own inline classes, and the optimizer (§9) works on raw dicts, not model instances.
 
 **Vessel** (`vessel.py`)
 ```python
@@ -221,23 +245,29 @@ end_time: datetime
 
 ## 7. Scenario File Schema (`scenarios/`)
 
-Two kinds of scenario file. **The files currently on disk (`baseline.json`, `eta_delay.json`, `crane_failure.json`, `compound_disruption.json`) only have `{name, description, disruptions: []}` with empty arrays — they need to be populated to match the schemas below.**
+Two kinds of scenario file. **All four files on disk are now populated** (`baseline.json`, `eta_delay.json`, `crane_failure.json`, `compound_disruption.json`) — an earlier draft of this doc briefly claimed the richer `old_eta`/`new_eta` shape below had been dropped in favor of a flatter `delay_hours`-only one; that was wrong. Both are accepted — the real, populated scenario files use the fuller shape, and `POST /disruptions` (§8) validates a superset that covers both.
 
-**Terminal state file** (e.g. `baseline.json`) — describes the terminal itself:
+**Terminal state file** (`baseline.json`) — describes the terminal itself. Real content today has 3 berths and 4 vessels:
 ```json
 {
+  "name": "baseline",
+  "description": "Normal port operations",
   "berths": [
     { "id": "B01", "length": 400, "cranes": ["QC01", "QC02", "QC03"] },
-    { "id": "B02", "length": 350, "cranes": ["QC04", "QC05"] }
+    { "id": "B02", "length": 350, "cranes": ["QC04", "QC05"] },
+    { "id": "B03", "length": 280, "cranes": ["QC06"] }
   ],
   "vessels": [
     { "id": "VESSEL_A", "eta": "2026-08-21T10:00:00", "move_count": 1800, "length": 300, "priority": 2 },
-    { "id": "VESSEL_B", "eta": "2026-08-21T13:00:00", "move_count": 900, "length": 250, "priority": 1 }
+    { "id": "VESSEL_B", "eta": "2026-08-21T13:00:00", "move_count": 900, "length": 250, "priority": 1 },
+    { "id": "VESSEL_C", "eta": "2026-08-21T14:00:00", "move_count": 1200, "length": 270, "priority": 3 },
+    { "id": "VESSEL_D", "eta": "2026-08-21T15:00:00", "move_count": 600, "length": 220, "priority": 2 }
   ]
 }
 ```
+`priority` is 1 = highest (see `models/vessel.py`) — the optimizer's `PLAN_PRIORITY` profile (§9) uses it as a weighting multiplier.
 
-**Disruption event file** (e.g. `eta_delay.json`) — describes what goes wrong, referencing the baseline terminal rather than duplicating it:
+**Disruption event file** (e.g. `eta_delay.json`) — describes what goes wrong, referencing the baseline terminal rather than duplicating it. This is the real, populated content:
 ```json
 {
   "scenario": "ETA Delay",
@@ -252,8 +282,7 @@ Two kinds of scenario file. **The files currently on disk (`baseline.json`, `eta
   ]
 }
 ```
-
-Other `type` values follow the same shape convention: `CRANE_FAILURE` (fields: `crane_id`, `time`, `expected_repair_time`), and `compound_disruption.json` is simply an `events` array with more than one event.
+`crane_failure.json` uses `{ "type": "CRANE_FAILURE", "crane_id": "QC02", "time": "...", "expected_repair_time": "..." }`; `compound_disruption.json` is just an `events` array containing both of the above. A `VESSEL_DELAY` event may give `new_eta` directly, or `delay_hours` instead (the applied ETA becomes old ETA + `delay_hours`) — `apply_disruptions` in `optimizer/constraints.py` accepts either. **Known gap:** `YARD_CONGESTION` is an accepted `type` at the API layer (§8) but `apply_disruptions` doesn't yet do anything with it — it's silently a no-op in the optimizer today.
 
 ## 8. API Contract (`backend/app/api/`)
 
@@ -264,30 +293,41 @@ Other `type` values follow the same shape convention: `CRANE_FAILURE` (fields: `
 | `/plans` | GET | — | latest candidate plans + recommendation for the active run |
 | `/approve` | POST | `{ plan_id, approved: bool }` | unblocks `human_approval` node, triggers `apply_plan` if approved |
 
-Response shape for a completed agent run (what the frontend polls/subscribes to):
-```json
-{
-  "status": "completed",
-  "recommended_plan": { "...": "Plan object" },
-  "agent_steps": [
-    { "step": "detect_disruption", "summary": "..." },
-    { "step": "assess_impact", "summary": "..." }
-  ]
-}
-```
+**As implemented (`backend/app/main.py`):** all four routes plus `/health` live directly in `main.py` — the route modules under `app/api/` (§3) still exist as empty stubs and aren't imported/mounted. Split the logic out into `app/api/disruptions.py`, `terminal.py`, `plans.py` per the target structure when convenient; not urgent for the hackathon.
+
+Real request/response shapes in the current code:
+- `POST /disruptions` body is `{ scenario?: string, events: [DisruptionEventDetail] }` (min 1 event). Each event accepts `type` (required — `VESSEL_DELAY` | `CRANE_FAILURE` | `YARD_CONGESTION`, enforced), plus every field either scenario shape in §7 might use, all optional: `vessel_id`, `crane_id`, `time`, `old_eta`, `new_eta`, `expected_repair_time`, `delay_hours`. Invalid `type` values are rejected with a 422 before the agent even runs. The pipeline runs **synchronously inside the request** (`agent_graph.invoke(...)`) and the response is:
+  ```json
+  {
+    "status": "completed",
+    "disruption_summary": "Processing 1 disruption event(s)...",
+    "recommended_plan": { "...": "Plan object" },
+    "agent_steps": [
+      { "step": "detect_disruption", "summary": "..." },
+      { "step": "assess_impact", "summary": "..." }
+    ]
+  }
+  ```
+- `POST /approve` body is `{ plan_id: string, approved: bool }`; response is `{ status: "approved"|"rejected", plan_id, message }`. As noted in §4, this currently just records the decision on the one global `active_run_state` — it does not gate `apply_plan`, since the graph has already finished running by the time this is called.
+- `GET /terminal-state` is a **stub** — always returns `{ "status": "ok", "message": "Terminal state data placeholder" }` regardless of real state.
+- `GET /plans` returns `{ candidate_plans, plan_kpis, recommended_plan }` for whatever run is in `active_run_state` (empty defaults if none has run yet).
+- State is held in one process-global `active_run_state` variable (no DB, no per-session/per-run IDs yet) — fine for a single-demo MVP, but means only one run can be tracked at a time.
 
 ## 9. Optimizer Output Contract
 
-`optimizer/berth_scheduler.py` (OR-Tools) exposes:
+**Implemented** — `optimizer/berth_scheduler.py` is a real OR-Tools CP-SAT model (not a placeholder): every vessel gets assigned to exactly one length- and crane-compatible berth, starting no earlier than its ETA, with no overlaps per berth. Service duration is derived from `move_count` and operational crane count (`constraints.py`, 30 moves/crane/hour, 15-minute time buckets). It solves up to three fixed objective profiles and keeps only the feasible, distinct ones: `PLAN_MIN_WAIT` (minimize total waiting), `PLAN_PRIORITY` (weight waiting by vessel priority), `PLAN_THROUGHPUT` (minimize schedule makespan). `optimisation_tools.generate_recovery_plans` then sorts whatever comes back by `avg_waiting_hours`, so the agent's `plans[0]` pick (§4) is the lowest-wait feasible plan.
+
 ```python
 result = optimize_schedule(terminal_state, disruption)
 # result = {
-#   "plans": [ { "plan_id": "...", "schedule": [...] }, ... ],
+#   "plans": [ { "plan_id": "PLAN_MIN_WAIT", "description": "...", "schedule": [ { "berth_id", "vessel_id", "start_time", "end_time", "cranes_used" }, ... ] }, ... ],
 #   "metrics": {
-#     "plan_id": { "avg_waiting_hours": float, "berth_utilization": float, "crane_idle_pct": float }
+#     "PLAN_MIN_WAIT": { "avg_waiting_hours": float, "berth_utilization": float, "crane_idle_pct": float }, ...
 #   }
 # }
 ```
+
+`disruption` is the raw `{scenario, events}` payload from §7/§8; `apply_disruptions` (`constraints.py`) folds `VESSEL_DELAY` and `CRANE_FAILURE` events into a modified terminal state before solving (see the known `YARD_CONGESTION` gap noted in §7). Solver is pinned to 1 worker and a fixed random seed, so results are reproducible — verified by `backend/tests/test_optimizer.py`.
 
 **Determinism requirement:** for a given scenario file, the optimizer and simulator must return the same plans and KPIs every run. The LLM's narration on top can vary; the underlying numbers must not — this is what makes a demo recording repeatable.
 
@@ -301,6 +341,10 @@ One hero screen — a "Port Operations Command Center" — rather than many page
 - **Recovery plan comparison** — recommended plan plus before/after KPIs (waiting time, berth utilization, crane idle time)
 - **Approve / Reject** action — calls `POST /approve`
 
+**As implemented** (`frontend/app/`) — the Command Center screen above is built (`components/Dashboard.tsx` + `TerminalMap`, `RecoveryPlans`, `ActivityFeed`, `DisruptionAlert`, `TerminalHealth`, `ScenarioPicker`), plus a top-down animated terminal map (ships glide between berths, a crane-down indicator, and — now driven by real schedule data — a "queued for {berth}" state whenever two vessels are assigned the same berth sequentially) that isn't in the original scope above but reads well in a demo.
+
+**Backend integration is real, with a fallback** (`lib/api.ts`): selecting a disruptive scenario calls `POST /disruptions` then `GET /plans` against `NEXT_PUBLIC_BACKEND_URL` (`.env.example`, defaults to `http://localhost:8000`) — verified against a running backend, no CORS issues. If that fails for any reason (backend not running, or `POST /disruptions` 500ing because `GROQ_API_KEY` isn't set locally — reproduced and confirmed as of this writing), it falls back to `lib/scenarios.ts`, which is **not invented mock data**: the berths, event payloads, and every plan/schedule/KPI in it are copied from the real `scenarios/*.json` files and from actually running `optimizer/berth_scheduler.optimize_schedule` (see its file header). `lib/derive.ts` holds the shared transforms (`deriveVesselPositions`, `summarizeDisruption`) so live and fallback data are reshaped identically — the UI can't tell them apart, and a small source note (live vs. precomputed) is the only visible difference. Approve/Reject calls `POST /approve` too, but only when the current run came from the live path. Not yet wired: baseline "Normal Operations" always uses the fallback data, since `GET /terminal-state` is still the stub noted in §8.
+
 ## 11. Milestones
 
 1. **M1 — Vertical slice:** one disruption scenario works end-to-end with no UI polish: `eta_delay.json` → `POST /disruptions` → agent graph → optimizer → a recommendation printed/returned as JSON.
@@ -310,26 +354,31 @@ One hero screen — a "Port Operations Command Center" — rather than many page
 
 ## 12. Status Tracker
 
-Seeded from a repo audit on 2026-08-22. **Update this table as work lands — it does not track itself.**
+Seeded from a repo audit on 2026-08-22; updated 2026-08-23 after PR #2 (`feature/langgraph-agent`, by aditig0305) landed the first real agent pipeline; updated again 2026-08-24 after merging PR #3 (`optimisation`, by kimberlytmq — real OR-Tools scheduler, Pydantic data models, populated scenario data) and the frontend dashboard build. **Update this table as work lands — it does not track itself.**
 
 | Component | Path | Status |
 |---|---|---|
-| FastAPI app + `/health` | `backend/app/main.py` | Done (placeholder scope only) |
-| Frontend homepage | `frontend/app/page.tsx` | Done (static placeholder only) |
-| Orchestrator agent | `backend/app/agents/orchestrator.py` | Not Started |
-| Impact agent | `backend/app/agents/impact_agent.py` | Not Started |
-| Planning agent | `backend/app/agents/planning_agent.py` | Not Started |
-| Recovery agent | `backend/app/agents/recovery_agent.py` | Not Started |
-| LangGraph wiring | `backend/app/agents/graph.py`, `state.py` | Not Started |
-| Terminal tools | `backend/app/tools/terminal_tools.py` | Not Started |
-| Optimisation tools | `backend/app/tools/optimisation_tools.py` | Done — loads baseline state and exposes deterministic recovery-plan candidates |
+| FastAPI app + `/health`, `/disruptions`, `/approve`, `/terminal-state`, `/plans` | `backend/app/main.py` | Done — all routes implemented directly in `main.py` (not split into `app/api/*` yet, see §8) |
+| Frontend homepage | `frontend/app/page.tsx` | Done — real Command Center dashboard with a scenario picker (see §10), not a placeholder |
+| LangGraph wiring (all 8 nodes + edges) | `backend/app/agents/graph.py` | Done |
+| Agent state schema | `backend/app/agents/state.py` | Done — see the `AgentState` TypedDict in §4 |
+| Orchestrator agent (`detect_disruption`) | `backend/app/agents/orchestrator.py` | Done |
+| Impact agent (`assess_impact`) | `backend/app/agents/impact_agent.py` | Done — but calls a hardcoded-mock tool, see §5 |
+| Planning agent (`generate_candidates`) | `backend/app/agents/planning_agent.py` | Done — now calls the real OR-Tools optimizer, see §5/§9 |
+| Recovery agent (`recommend_plan`) | `backend/app/agents/recovery_agent.py` | Done — real Groq LLM call for narration; plan selection is the deterministic sort over real optimizer output |
+| `simulate_candidates`, `evaluate_candidates` nodes | `backend/app/agents/graph.py` | In Progress — placeholder nodes, log only, no real simulation/scoring logic yet |
+| `human_approval`, `apply_plan` nodes | `backend/app/agents/graph.py` | In Progress — placeholder nodes; approval does not actually gate execution yet (see §4) |
+| Terminal tools | `backend/app/tools/terminal_tools.py` | In Progress — `assess_disruption` exists but is a hardcoded stub (marked `TODO` in code); `get_vessel`, `get_terminal_state`, `get_berth_schedule`, `get_crane_availability`, `apply_recovery_plan` not started |
+| Optimisation tools | `backend/app/tools/optimisation_tools.py` | Done — calls the real OR-Tools scheduler; falls back to loading `scenarios/baseline.json` when no `terminal_state` is passed in |
 | Simulation tools | `backend/app/tools/simulation_tools.py` | Not Started |
 | Scenario tools | `backend/app/tools/scenario_tools.py` | Not Started |
-| Berth scheduler (OR-Tools) | `backend/app/optimizer/berth_scheduler.py`, `constraints.py`, `scoring.py` | Done — CP-SAT berth assignment, no-overlap, ETA-delay/crane-outage inputs, KPIs |
+| Berth scheduler (OR-Tools) | `backend/app/optimizer/berth_scheduler.py`, `constraints.py`, `scoring.py` | Done — CP-SAT berth assignment, no-overlap, 3 objective profiles, ETA-delay/crane-outage inputs, KPIs (see §9); tested in `test_optimizer.py` |
 | Simulation engine | `backend/app/simulation/terminal.py`, `disruptions.py`, `evaluator.py` | Not Started |
-| Data models | `backend/app/models/*.py` | Partial — vessel, berth, crane and schedule schemas are implemented |
-| API routes | `backend/app/api/disruptions.py`, `terminal.py`, `plans.py` | Not Started (files exist, not wired into `main.py`) |
-| Scenario data | `scenarios/*.json` | Partial — baseline terminal state and three disruption event files are populated |
-| Frontend terminal/scenario views + components | `frontend/app/terminal/`, `frontend/app/scenarios/`, `frontend/app/components/` | Not Started (empty dirs) |
-| Tests | `backend/tests/*.py` | Partial — deterministic scheduler feasibility and disruption tests added |
+| Data models | `backend/app/models/*.py` | Partial — `Vessel`/`Berth`/`Crane`/`ScheduleEntry` Pydantic schemas are implemented, but nothing uses them yet: the API validates its own inline models in `main.py`, and the optimizer works on raw dicts |
+| API routes as separate modules | `backend/app/api/disruptions.py`, `terminal.py`, `plans.py` | Not Started (files still empty stubs; logic lives in `main.py` instead, see §8) |
+| Scenario data | `scenarios/*.json` | Done — all 4 files populated (3 berths/4 vessels baseline, 3 disruption event files), see §7 |
+| Frontend implementation | `frontend/app/` | Done as one page — `Dashboard.tsx` + components render the full Command Center; dedicated `app/terminal/` and `app/scenarios/` route folders from §3 are still unused/empty since everything lives on one screen |
+| Frontend ↔ backend integration | `frontend/lib/api.ts`, `derive.ts` | Done — calls `/disruptions` + `/plans` (and `/approve` on decision) against a real backend with graceful fallback to precomputed real-optimizer data on failure, see §10 |
+| Tests | `backend/tests/*.py` | Partial — `test_optimizer.py` is real `pytest` coverage of the CP-SAT scheduler (feasibility, determinism, infeasible-input error); `test_run.py` is still a manual smoke-test script for the agent pipeline, not `pytest`-based |
+| `.env.example` | root | Needs update — missing `GROQ_API_KEY`, now required by `recovery_agent.py` |
 | `docs/architecture.md`, `product-concept.md`, `demo-script.md` | `docs/` | Not Started (1-line stubs) |

@@ -1,0 +1,75 @@
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--critical);
+  background: var(--critical-soft);
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  margin-bottom: 0.7rem;
+}
+
+.tag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--critical);
+}
+
+.tagOk {
+  color: var(--good);
+  background: var(--good-soft);
+}
+
+.tagOk::before {
+  background: var(--good);
+}
+
+.headline {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.9rem, 3.2vw, 2.7rem);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  max-width: 20ch;
+}
+
+.sub {
+  color: var(--text-dim);
+  font-size: 1rem;
+  margin-top: 0.5rem;
+}
+
+.delay {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.delayLabel {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.delayValue {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 3.2rem;
+  line-height: 1;
+  color: var(--critical);
+  font-variant-numeric: tabular-nums;
+}
