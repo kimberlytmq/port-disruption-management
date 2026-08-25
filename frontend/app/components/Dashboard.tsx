@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ScenarioData, ScenarioId } from "@/lib/types";
 import { SCENARIOS } from "@/lib/scenarios";
 import { loadScenario } from "@/lib/api";
-import { ScenarioPicker } from "./ScenarioPicker";
+import { diffVessels } from "@/lib/derive";
+import { ScenarioTrigger } from "./ScenarioTrigger";
+import { ImpactNarration } from "./ImpactNarration";
 import { DisruptionAlert } from "./DisruptionAlert";
 import { TerminalMap } from "./TerminalMap";
 import { RecoveryPlans } from "./RecoveryPlans";
@@ -12,42 +14,99 @@ import { ActivityFeed } from "./ActivityFeed";
 import { TerminalHealth } from "./TerminalHealth";
 import styles from "../page.module.css";
 
+// The playback sequence for a triggered scenario:
+//   loading      -> fetching (or falling back to) the real data
+//   impact       -> narrate why this is a problem, map still shows the
+//                   unresolved (baseline) layout with fault flags
+//   considering  -> agent activity starts revealing; map briefly ghosts an
+//                   alternative plan the agent looked at and rejected
+//   settled      -> map animates to the real recommended layout
+//   result       -> recommendation + Approve/Reject appear
+type Phase = "idle" | "loading" | "impact" | "considering" | "settled" | "result";
+
+const BEAT_MS = 1600;
+const CONSIDERING_MS = 1800;
+const SETTLE_TO_RESULT_MS = 1400;
+
 export function Dashboard() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [scenario, setScenario] = useState<ScenarioData>(SCENARIOS.baseline);
-  const [runId, setRunId] = useState(0);
   const [source, setSource] = useState<"live" | "fallback">("fallback");
-  const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [runId, setRunId] = useState(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  function clearTimers() {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }
+  useEffect(() => () => clearTimers(), []);
 
   async function play(id: ScenarioId) {
+    clearTimers();
     setScenarioId(id);
-    setLoading(true);
+    setPhase("loading");
+
     const result = await loadScenario(id);
     setScenario(result.data);
     setSource(result.source);
     setRunId((r) => r + 1);
-    setLoading(false);
+    setPhase("impact");
+
+    const impactMs = Math.max(result.data.consequenceBeats.length, 1) * BEAT_MS;
+    timers.current.push(setTimeout(() => setPhase("considering"), impactMs));
+    timers.current.push(setTimeout(() => setPhase("settled"), impactMs + CONSIDERING_MS));
+    timers.current.push(setTimeout(() => setPhase("result"), impactMs + CONSIDERING_MS + SETTLE_TO_RESULT_MS));
   }
 
-  const hasPlan = scenario.candidatePlans.length > 0 && scenario.recommendedPlanId !== null;
+  function reset() {
+    clearTimers();
+    setScenarioId("baseline");
+    setScenario(SCENARIOS.baseline);
+    setPhase("idle");
+  }
+
+  const isBaseline = scenarioId === "baseline";
+  const isResolved = phase === "settled" || phase === "result";
+  const mapVessels = isResolved ? scenario.resolvedVessels : scenario.problemVessels;
+  const ghostDiff = scenario.ghostVessels ? diffVessels(scenario.ghostVessels, scenario.problemVessels) : [];
+  const showGhost = phase === "considering" && ghostDiff.length > 0 ? ghostDiff : null;
+  const hasPlan = phase === "result" && scenario.candidatePlans.length > 0 && scenario.recommendedPlanId !== null;
 
   return (
     <>
-      <ScenarioPicker activeId={scenarioId} onPlay={play} loading={loading} />
-
-      {scenarioId !== "baseline" && (
+      {isBaseline ? (
+        <ScenarioTrigger onPlay={play} />
+      ) : (
         <div className={styles.sourceNote}>
-          {loading ? "Running the agent pipeline…" : source === "live" ? "● Live result from the backend" : "○ Backend unreachable — showing precomputed results from the real optimizer"}
+          <span>
+            {phase === "loading"
+              ? "Running the agent pipeline…"
+              : source === "live"
+                ? "● Live result from the backend"
+                : "○ Backend unreachable — showing precomputed results from the real optimizer"}
+          </span>
+          <button className={styles.backLink} onClick={reset}>
+            ◂ Back to normal operations
+          </button>
         </div>
       )}
 
-      <DisruptionAlert disruption={scenario.disruption} />
+      {phase === "loading" ? (
+        <div className={styles.hero}>
+          <div className={styles.headlinePulse}>Detecting disruption…</div>
+        </div>
+      ) : (
+        <DisruptionAlert disruption={scenario.disruption} />
+      )}
 
-      <TerminalMap berths={scenario.berths} vessels={scenario.vessels} craneAlert={scenario.craneAlert} />
+      {!isBaseline && phase !== "loading" && <ImpactNarration key={`impact-${runId}`} beats={scenario.consequenceBeats} />}
+
+      <TerminalMap berths={scenario.berths} vessels={mapVessels} craneAlert={scenario.craneAlert} ghostVessels={showGhost} />
 
       <div className={styles.grid}>
         <div>
-          <div className={styles.sectionLabel}>{hasPlan ? "Recommended action" : "Terminal status"}</div>
+          <div className={styles.sectionLabel}>{hasPlan ? "Recommended action" : isBaseline ? "Terminal status" : "Working"}</div>
           {hasPlan ? (
             <RecoveryPlans
               key={`plans-${runId}`}
@@ -55,16 +114,25 @@ export function Dashboard() {
               planKpis={scenario.planKpis}
               recommendedPlanId={scenario.recommendedPlanId as string}
               baselineKpis={scenario.baselineKpis}
+              actionSentence={scenario.actionSentence}
               live={source === "live"}
             />
+          ) : isBaseline ? (
+            <TerminalHealth kpis={scenario.baselineKpis} />
           ) : (
-            <TerminalHealth key={`health-${runId}`} kpis={scenario.baselineKpis} />
+            <div className={styles.thinking}>Working through the options…</div>
           )}
         </div>
 
         <div>
           <div className={styles.sectionLabel}>Agent activity</div>
-          <ActivityFeed key={`feed-${runId}`} steps={scenario.agentSteps} />
+          {isBaseline ? (
+            <div className={styles.thinking}>No active disruptions — agent is idle, watching for events.</div>
+          ) : phase === "loading" || phase === "impact" ? (
+            <div className={styles.thinking}>Explaining the disruption first…</div>
+          ) : (
+            <ActivityFeed key={`feed-${runId}`} steps={scenario.agentSteps} />
+          )}
         </div>
       </div>
     </>

@@ -11,10 +11,12 @@ export function TerminalMap({
   berths,
   vessels,
   craneAlert,
+  ghostVessels,
 }: {
   berths: Berth[];
   vessels: VesselPosition[];
   craneAlert: CraneAlert | null;
+  ghostVessels?: VesselPosition[] | null;
 }) {
   const positions = new Map(berths.map((berth, i) => [berth.id, berthPosition(i, berths.length)]));
 
@@ -75,6 +77,27 @@ export function TerminalMap({
             </div>
           );
         })}
+
+        {ghostVessels && <div className={styles.ghostLabel}>Considering an alternative…</div>}
+        {(() => {
+          const seenPerBerth = new Map<string, number>();
+          return (ghostVessels ?? []).map((vessel) => {
+            const slot = seenPerBerth.get(vessel.berth_id) ?? 0;
+            seenPerBerth.set(vessel.berth_id, slot + 1);
+            const offsetPx = slot === 0 ? -58 : 58 * slot;
+            const basePct = positions.get(vessel.berth_id);
+            return (
+              <div
+                key={`ghost-${vessel.vessel_id}`}
+                className={`${styles.ship} ${styles.ghost}`}
+                style={{ left: `calc(${basePct} + ${offsetPx}px)`, bottom: 236 }}
+              >
+                <div className={styles.ghostTag}>alt: {vessel.vessel_id}</div>
+                <div className={`${styles.hull} ${styles.hullGhost}`} />
+              </div>
+            );
+          });
+        })()}
       </div>
     </div>
   );

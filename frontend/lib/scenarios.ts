@@ -1,5 +1,5 @@
 import type { Berth, DisruptionPayload, PlanKpis, RecoveryPlan, ScenarioData, ScenarioId } from "./types";
-import { deriveVesselPositions, summarizeDisruption, toDisplaySteps } from "./derive";
+import { consequenceBeats, deriveVesselPositions, describeAction, summarizeDisruption, toDisplaySteps } from "./derive";
 
 // Everything in this file is a snapshot of the REAL backend, not invented:
 // - BERTHS is copied from scenarios/baseline.json.
@@ -12,12 +12,12 @@ import { deriveVesselPositions, summarizeDisruption, toDisplaySteps } from "./de
 // lib/api.ts) — same shape either way, so the UI can't tell the difference.
 
 export const PLAN_LABELS: Record<string, string> = {
-  PLAN_MIN_WAIT: "Minimize Wait",
-  PLAN_PRIORITY: "Protect Priority",
-  PLAN_THROUGHPUT: "Minimize Completion",
+  PLAN_MIN_WAIT: "minimizes average wait",
+  PLAN_PRIORITY: "protects priority vessels",
+  PLAN_THROUGHPUT: "minimizes total completion time",
 };
 
-const BERTHS: Berth[] = [
+export const BERTHS: Berth[] = [
   { id: "B01", length: 400, cranes: ["QC01", "QC02", "QC03"] },
   { id: "B02", length: 350, cranes: ["QC04", "QC05"] },
   { id: "B03", length: 280, cranes: ["QC06"] },
@@ -43,7 +43,7 @@ const EVENT_PAYLOADS: Record<Exclude<ScenarioId, "baseline">, DisruptionPayload>
   },
 };
 
-const BASELINE_PLAN: RecoveryPlan = {
+export const BASELINE_PLAN: RecoveryPlan = {
   plan_id: "PLAN_MIN_WAIT",
   description: "Minimise average vessel waiting time.",
   schedule: [
@@ -53,7 +53,7 @@ const BASELINE_PLAN: RecoveryPlan = {
     { berth_id: "B01", vessel_id: "VESSEL_C", start_time: "2026-08-21T21:45:00", end_time: "2026-08-22T11:15:00", cranes_used: 3 },
   ],
 };
-const BASELINE_KPIS: PlanKpis = { avg_waiting_hours: 1.94, berth_utilization: 81.06, crane_idle_pct: 23.86 };
+export const BASELINE_KPIS: PlanKpis = { avg_waiting_hours: 1.94, berth_utilization: 81.06, crane_idle_pct: 23.86 };
 
 const PLANS: Record<Exclude<ScenarioId, "baseline">, { plans: RecoveryPlan[]; metrics: Record<string, PlanKpis> }> = {
   eta_delay: {
@@ -172,11 +172,13 @@ const STEP_SUMMARIES: Record<Exclude<ScenarioId, "baseline">, { step: string; su
   ],
 };
 
-function buildScenario(id: Exclude<ScenarioId, "baseline">, label: string): ScenarioData {
+export function buildScenario(id: Exclude<ScenarioId, "baseline">, label: string): ScenarioData {
   const payload = EVENT_PAYLOADS[id];
   const { disruption, craneAlert, delayedHours } = summarizeDisruption(payload.events, BERTHS);
   const { plans, metrics } = PLANS[id];
   const recommendedPlanId = plans[0].plan_id;
+  const recommended = plans[0];
+  const alternative = plans.find((p) => p.plan_id !== recommendedPlanId) ?? null;
 
   return {
     id,
@@ -184,13 +186,17 @@ function buildScenario(id: Exclude<ScenarioId, "baseline">, label: string): Scen
     disruption,
     payload,
     berths: BERTHS,
-    vessels: deriveVesselPositions(plans[0].schedule, delayedHours),
+    problemVessels: deriveVesselPositions(BASELINE_PLAN.schedule, delayedHours),
+    resolvedVessels: deriveVesselPositions(recommended.schedule, delayedHours),
+    ghostVessels: alternative ? deriveVesselPositions(alternative.schedule, delayedHours) : null,
     craneAlert,
     agentSteps: toDisplaySteps(STEP_SUMMARIES[id]),
     candidatePlans: plans,
     planKpis: metrics,
     recommendedPlanId,
     baselineKpis: BASELINE_KPIS,
+    consequenceBeats: consequenceBeats(payload.events, BERTHS),
+    actionSentence: describeAction(BASELINE_PLAN.schedule, recommended.schedule, Object.keys(delayedHours)),
   };
 }
 
@@ -201,13 +207,17 @@ export const SCENARIOS: Record<ScenarioId, ScenarioData> = {
     disruption: null,
     payload: null,
     berths: BERTHS,
-    vessels: deriveVesselPositions(BASELINE_PLAN.schedule, {}),
+    problemVessels: deriveVesselPositions(BASELINE_PLAN.schedule, {}),
+    resolvedVessels: deriveVesselPositions(BASELINE_PLAN.schedule, {}),
+    ghostVessels: null,
     craneAlert: null,
     agentSteps: [],
     candidatePlans: [],
     planKpis: {},
     recommendedPlanId: null,
     baselineKpis: BASELINE_KPIS,
+    consequenceBeats: [],
+    actionSentence: null,
   },
   eta_delay: buildScenario("eta_delay", "ETA Delay"),
   crane_failure: buildScenario("crane_failure", "Crane Failure"),

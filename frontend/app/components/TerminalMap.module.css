@@ -188,6 +188,48 @@
   animation: queueBob 5s ease-in-out infinite;
 }
 
+.ghost {
+  animation: ghostPulse 1.4s ease-in-out infinite;
+  z-index: 2;
+}
+
+.ghostTag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--navy-deep);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1.5px dashed var(--navy);
+  padding: 0.1rem 0.45rem;
+  border-radius: 5px;
+  margin-bottom: 0.3rem;
+  white-space: nowrap;
+}
+
+.hullGhost {
+  background: transparent;
+  border: 2px dashed var(--navy);
+  opacity: 0.85;
+}
+
+@keyframes ghostPulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.9; }
+}
+
+.ghostLabel {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: #ffffffcc;
+  background: rgba(14, 35, 56, 0.55);
+  padding: 0.25rem 0.6rem;
+  border-radius: 5px;
+}
+
 @keyframes queueBob {
   0%, 100% { transform: translate(-50%, 0); }
   50% { transform: translate(-50%, -6px); }

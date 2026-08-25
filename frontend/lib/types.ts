@@ -94,11 +94,23 @@ export interface ScenarioData {
   disruption: Disruption | null;
   payload: DisruptionPayload | null;
   berths: Berth[];
-  vessels: VesselPosition[];
+  // The unresolved situation: current schedule, but broken by the event —
+  // shown while the problem is being explained and while the agent "thinks."
+  problemVessels: VesselPosition[];
+  // What the recommended plan actually does — shown once the agent settles.
+  resolvedVessels: VesselPosition[];
+  // A briefly-flashed alternative the agent considered and didn't pick.
+  ghostVessels: VesselPosition[] | null;
   craneAlert: CraneAlert | null;
   agentSteps: AgentStep[];
   candidatePlans: RecoveryPlan[];
   planKpis: Record<string, PlanKpis>;
   recommendedPlanId: string | null;
   baselineKpis: PlanKpis;
+  // Plain-English lines explaining why the disruption is a problem, revealed
+  // one at a time before the agent's fix is shown.
+  consequenceBeats: string[];
+  // The recommendation phrased as an instruction ("Move X to Berth Y"),
+  // derived from the real schedule diff — not the optimizer's profile name.
+  actionSentence: string | null;
 }

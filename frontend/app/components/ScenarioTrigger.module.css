@@ -1,0 +1,152 @@
+.wrap {
+  margin-bottom: 1.5rem;
+}
+
+.launchBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family: "Bricolage Grotesque", sans-serif;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.launchBtn:hover {
+  background: #1e4265;
+  transform: translateY(-1px);
+}
+
+.launchBtn:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 3px;
+}
+
+.bolt {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #6fd8ac;
+  flex-shrink: 0;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 760px) {
+  .cards { grid-template-columns: 1fr; }
+}
+
+.card {
+  text-align: left;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.3rem;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  opacity: 0;
+  animation: cardIn 0.4s ease forwards;
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.card:hover {
+  border-color: var(--navy);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(22, 50, 79, 0.12);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+
+.icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.9rem;
+  position: relative;
+  background: var(--critical-soft);
+}
+
+.cardTitle {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-bottom: 0.3rem;
+}
+
+.cardTeaser {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* --- icon glyphs, built from CSS shapes, no external assets --- */
+.iconClock {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--critical);
+  position: relative;
+}
+.iconClock::before,
+.iconClock::after {
+  content: "";
+  position: absolute;
+  background: var(--critical);
+  border-radius: 2px;
+}
+.iconClock::before {
+  width: 2px;
+  height: 7px;
+  top: 3px;
+  left: 8px;
+  transform-origin: bottom center;
+}
+.iconClock::after {
+  width: 6px;
+  height: 2px;
+  top: 8px;
+  left: 9px;
+  transform-origin: left center;
+  transform: rotate(70deg);
+}
+
+.iconBolt {
+  width: 16px;
+  height: 22px;
+  position: relative;
+}
+.iconBolt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--critical);
+  clip-path: polygon(60% 0%, 0% 60%, 40% 60%, 30% 100%, 100% 35%, 55% 35%);
+}
+
+.iconCombo {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.iconCombo .iconClock,
+.iconCombo .iconBolt {
+  transform: scale(0.72);
+}

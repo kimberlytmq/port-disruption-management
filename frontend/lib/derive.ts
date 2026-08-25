@@ -72,6 +72,17 @@ export function deriveVesselPositions(schedule: ScheduleEntry[], delayedHours: R
   return positions.sort((a, b) => a.vessel_id.localeCompare(b.vessel_id));
 }
 
+// Only the vessels whose berth or queue slot actually differs between two
+// position sets — used to show a "the agent considered this instead" ghost
+// without redundantly re-drawing ships that would land in the same spot.
+export function diffVessels(a: VesselPosition[], b: VesselPosition[]): VesselPosition[] {
+  const byId = new Map(b.map((v) => [v.vessel_id, v]));
+  return a.filter((v) => {
+    const other = byId.get(v.vessel_id);
+    return !other || other.berth_id !== v.berth_id || other.queueIndex !== v.queueIndex;
+  });
+}
+
 // Turns the raw event payload sent to POST /disruptions into display copy +
 // a crane alert + a vessel_id -> delay_hours map, so headline text always
 // matches the actual event data instead of being hand-written separately.
@@ -143,4 +154,83 @@ export function summarizeDisruption(
   }
 
   return { disruption: null, craneAlert: null, delayedHours: {} };
+}
+
+// Plain-English lines explaining why the disruption is a problem, in the
+// order they should be revealed. Every number here comes from the real
+// event payload — nothing is invented per scenario.
+export function consequenceBeats(events: DisruptionEvent[], berths: Berth[]): string[] {
+  const delays = events.filter((e) => e.type === "VESSEL_DELAY");
+  const craneFailures = events.filter((e) => e.type === "CRANE_FAILURE");
+  const beats: string[] = [];
+
+  for (const d of delays) {
+    const hrs = d.delay_hours ?? (d.old_eta && d.new_eta ? hoursBetween(d.old_eta, d.new_eta) : 0);
+    beats.push(`${d.vessel_id} was due at ${timeOf(d.old_eta)}. It won't arrive until ${timeOf(d.new_eta)} — ${hrs}h late.`);
+  }
+  for (const c of craneFailures) {
+    const berth = c.crane_id ? findBerthForCrane(berths, c.crane_id) : undefined;
+    if (berth && c.crane_id) {
+      beats.push(
+        `${c.crane_id} has gone offline at Berth ${berth.id} — down to ${berth.cranes.length - 1} of ${berth.cranes.length} cranes, so every ship there takes longer to turn around.`,
+      );
+    }
+  }
+  if (delays.length > 0 && craneFailures.length > 0) {
+    beats.push("Two problems at once — the fix has to account for both, not just patch one.");
+  } else if (delays.length > 0) {
+    beats.push("That delay lands right on top of the schedule already built for every other vessel.");
+  }
+  return beats;
+}
+
+function formatTimeOnDay(iso: string, referenceDate: string): string {
+  const time = timeOf(iso);
+  return iso.slice(0, 10) === referenceDate ? time : `${time} next day`;
+}
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+// The recommendation, phrased as an instruction a duty planner could act on,
+// derived from what actually differs between the normal-operations schedule
+// and the recommended plan's real schedule — not the optimizer's profile
+// name ("Minimise average waiting time"), which describes a goal, not an act.
+export function describeAction(baseline: ScheduleEntry[], recommended: ScheduleEntry[], delayedVessels: string[]): string {
+  const referenceDate = baseline[0]?.start_time.slice(0, 10) ?? "";
+  const byVessel = new Map(baseline.map((e) => [e.vessel_id, e]));
+
+  type Change = { vesselId: string; kind: "berth" | "time"; from?: string; to?: string; berth?: string; minutesDelta: number; newStart: string };
+  const changes: Change[] = [];
+
+  for (const entry of recommended) {
+    const before = byVessel.get(entry.vessel_id);
+    if (!before) continue;
+    const minutesDelta = Math.round((new Date(entry.start_time).getTime() - new Date(before.start_time).getTime()) / 60_000);
+    if (before.berth_id !== entry.berth_id) {
+      changes.push({ vesselId: entry.vessel_id, kind: "berth", from: before.berth_id, to: entry.berth_id, minutesDelta, newStart: entry.start_time });
+    } else if (Math.abs(minutesDelta) >= 15 && !delayedVessels.includes(entry.vessel_id)) {
+      changes.push({ vesselId: entry.vessel_id, kind: "time", berth: entry.berth_id, minutesDelta, newStart: entry.start_time });
+    }
+  }
+
+  if (changes.length === 0) {
+    const heldVessel = delayedVessels[0];
+    const entry = heldVessel ? recommended.find((e) => e.vessel_id === heldVessel) : undefined;
+    return entry
+      ? `No other vessel needs to move — Berth ${entry.berth_id} simply holds for ${heldVessel} until ${formatTimeOnDay(entry.start_time, referenceDate)}.`
+      : "No schedule changes needed — the current plan already holds.";
+  }
+
+  changes.sort((a, b) => (a.kind === b.kind ? Math.abs(b.minutesDelta) - Math.abs(a.minutesDelta) : a.kind === "berth" ? -1 : 1));
+  const top = changes[0];
+  if (top.kind === "berth") {
+    return `Move ${top.vesselId} from Berth ${top.from} to Berth ${top.to}.`;
+  }
+  const verb = top.minutesDelta > 0 ? "Push back" : "Bring forward";
+  return `${verb} ${top.vesselId}'s turn at Berth ${top.berth} by ${formatDuration(Math.abs(top.minutesDelta))} to ${formatTimeOnDay(top.newStart, referenceDate)}.`;
 }

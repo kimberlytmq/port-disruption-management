@@ -6,8 +6,8 @@ import { PLAN_LABELS } from "@/lib/scenarios";
 import { approvePlan } from "@/lib/api";
 import styles from "./RecoveryPlans.module.css";
 
-function planName(plan: RecoveryPlan): string {
-  return PLAN_LABELS[plan.plan_id] ?? plan.plan_id;
+function planRationale(plan: RecoveryPlan): string {
+  return PLAN_LABELS[plan.plan_id] ?? plan.description;
 }
 
 // Lower wait / crane idle is better; higher berth utilization is better.
@@ -32,12 +32,14 @@ export function RecoveryPlans({
   planKpis,
   recommendedPlanId,
   baselineKpis,
+  actionSentence,
   live,
 }: {
   candidatePlans: RecoveryPlan[];
   planKpis: Record<string, PlanKpis>;
   recommendedPlanId: string;
   baselineKpis: PlanKpis;
+  actionSentence: string | null;
   live: boolean;
 }) {
   const [decision, setDecision] = useState<"pending" | "approved" | "rejected">("pending");
@@ -61,10 +63,10 @@ export function RecoveryPlans({
       {recommended && (
         <div className={`${styles.plan} ${styles.rec}`}>
           <div className={styles.head}>
-            <span className={styles.name}>{planName(recommended)}</span>
-            <span className={styles.badge}>Recommended</span>
+            <span className={styles.badge}>Recommended action</span>
           </div>
-          <div className={styles.desc}>{recommended.description}</div>
+          <div className={styles.actionSentence}>{actionSentence ?? recommended.description}</div>
+          <div className={styles.rationale}>Chosen because it {planRationale(recommended)}.</div>
           <div className={styles.kpis}>
             {(() => {
               const kpi = planKpis[recommended.plan_id];
@@ -96,7 +98,7 @@ export function RecoveryPlans({
           {decision === "pending" ? (
             <div className={styles.actions}>
               <button className={`${styles.btn} ${styles.approve}`} onClick={() => decide(true)}>
-                Approve {planName(recommended)}
+                Approve this action
               </button>
               <button className={`${styles.btn} ${styles.reject}`} onClick={() => decide(false)}>
                 Reject
@@ -104,9 +106,7 @@ export function RecoveryPlans({
             </div>
           ) : (
             <div className={`${styles.decision} ${decision === "approved" ? styles.decisionApproved : styles.decisionRejected}`}>
-              {decision === "approved"
-                ? `Approved — applying ${planName(recommended)} to the live schedule.`
-                : "Rejected — duty planner will choose another course of action."}
+              {decision === "approved" ? "Approved — applying this to the live schedule." : "Rejected — duty planner will choose another course of action."}
             </div>
           )}
         </div>
@@ -115,9 +115,9 @@ export function RecoveryPlans({
       {alternatives.map((plan) => (
         <div key={plan.plan_id} className={`${styles.plan} ${styles.alt}`}>
           <div className={styles.head}>
-            <span className={styles.name}>{planName(plan)}</span>
+            <span className={styles.name}>Alternative — {plan.description.replace(/\.$/, "")}</span>
           </div>
-          <div className={styles.desc}>{plan.description}</div>
+          <div className={styles.desc}>Considered, but scores worse overall.</div>
           <div className={styles.kpis}>
             <div>
               <div className={styles.kpiLabel}>Avg. wait</div>

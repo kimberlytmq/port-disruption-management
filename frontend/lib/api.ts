@@ -1,6 +1,6 @@
 import type { DisruptionPayload, PlanKpis, RawAgentStep, RecoveryPlan, ScenarioData, ScenarioId } from "./types";
-import { deriveVesselPositions, summarizeDisruption, toDisplaySteps } from "./derive";
-import { SCENARIOS } from "./scenarios";
+import { consequenceBeats, deriveVesselPositions, describeAction, summarizeDisruption, toDisplaySteps } from "./derive";
+import { BASELINE_PLAN, SCENARIOS } from "./scenarios";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
@@ -51,6 +51,7 @@ async function runLive(id: Exclude<ScenarioId, "baseline">, payload: DisruptionP
   const candidatePlans = plansResult.candidate_plans.length > 0 ? plansResult.candidate_plans : disruptionsResult.recommended_plan ? [disruptionsResult.recommended_plan] : [];
   const recommended = plansResult.recommended_plan ?? disruptionsResult.recommended_plan;
   if (!recommended) throw new Error("Backend returned no recommended plan");
+  const alternative = candidatePlans.find((p) => p.plan_id !== recommended.plan_id) ?? null;
 
   return {
     id,
@@ -58,13 +59,17 @@ async function runLive(id: Exclude<ScenarioId, "baseline">, payload: DisruptionP
     disruption,
     payload,
     berths,
-    vessels: deriveVesselPositions(recommended.schedule, delayedHours),
+    problemVessels: deriveVesselPositions(BASELINE_PLAN.schedule, delayedHours),
+    resolvedVessels: deriveVesselPositions(recommended.schedule, delayedHours),
+    ghostVessels: alternative ? deriveVesselPositions(alternative.schedule, delayedHours) : null,
     craneAlert,
     agentSteps: toDisplaySteps(disruptionsResult.agent_steps),
     candidatePlans,
     planKpis: plansResult.plan_kpis ?? {},
     recommendedPlanId: recommended.plan_id,
     baselineKpis: SCENARIOS[id].baselineKpis,
+    consequenceBeats: consequenceBeats(payload.events, berths),
+    actionSentence: describeAction(BASELINE_PLAN.schedule, recommended.schedule, Object.keys(delayedHours)),
   };
 }
 

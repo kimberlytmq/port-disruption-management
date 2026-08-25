@@ -38,6 +38,21 @@
   margin-bottom: 1rem;
 }
 
+.actionSentence {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.4rem;
+  line-height: 1.25;
+  text-wrap: balance;
+  margin-bottom: 0.4rem;
+}
+
+.rationale {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 1.1rem;
+}
+
 .kpis {
   display: flex;
   gap: 1.75rem;
@@ -84,6 +99,7 @@
 }
 
 .rec .desc { color: #b9c6d1; }
+.rec .rationale { color: #b9c6d1; }
 .rec .kpiLabel { color: #96a7b5; }
 .rec .kpiValue { color: #ffffff; font-size: 1.7rem; }
 .rec .kpiDelta.pos { color: #6fd8ac; }
