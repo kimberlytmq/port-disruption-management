@@ -1,4 +1,6 @@
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt
 from .state import AgentState
 
 # Existing nodes
@@ -23,26 +25,53 @@ def evaluate_candidates(state: AgentState) -> AgentState:
     return state
 
 def human_approval(state: AgentState) -> AgentState:
-    # In a full LangGraph setup, this would be an interrupt/breakpoint. 
-    # For now, it logs that we are awaiting approval.
-    state.setdefault("agent_steps", []).append({
-        "step": "human_approval", 
-        "summary": "Awaiting human duty planner approval."
+    # Guarded because LangGraph re-runs this entire function from the top
+    # when resuming after interrupt() — without the guard this would log
+    # "awaiting approval" a second time on resume.
+    steps = state.setdefault("agent_steps", [])
+    if not steps or steps[-1]["step"] != "human_approval":
+        steps.append({
+            "step": "human_approval",
+            "summary": "Awaiting human duty planner approval."
+        })
+
+    # Note: any scalar field (like state["status"]) set here would NOT
+    # persist once interrupt() pauses execution — LangGraph only applies
+    # a node's field updates once the node actually returns. Only in-place
+    # mutations to already-shared mutable objects (like the agent_steps
+    # list above) survive a pause. main.py derives "awaiting_approval"
+    # itself from the presence of "__interrupt__" in the invoke() result.
+
+    # interrupt() actually halts the graph here. Execution will not continue
+    # past this line until something calls invoke(Command(resume=...))
+    # with the same thread_id. Whatever value is passed to resume becomes
+    # the return value of this call.
+    decision = interrupt({
+        "question": "Approve the recommended recovery plan?",
+        "recommended_plan": state.get("recommended_plan"),
     })
+
+    state["human_approval"] = decision
     return state
 
 def apply_plan(state: AgentState) -> AgentState:
-    state.setdefault("agent_steps", []).append({
-        "step": "apply_plan", 
-        "summary": "Plan execution simulated."
-    })
-    state["status"] = "completed"
+    if state.get("human_approval"):
+        state.setdefault("agent_steps", []).append({
+            "step": "apply_plan",
+            "summary": "Plan approved by duty planner and applied to the terminal schedule."
+        })
+        state["status"] = "completed"
+    else:
+        state.setdefault("agent_steps", []).append({
+            "step": "apply_plan",
+            "summary": "Plan rejected by duty planner. No changes applied."
+        })
+        state["status"] = "rejected"
     return state
 
 # --- Graph Wiring ---
 workflow = StateGraph(AgentState)
 
-# Add all 8 nodes required by Section 4
 workflow.add_node("detect_disruption", detect_disruption)
 workflow.add_node("assess_impact", assess_impact)
 workflow.add_node("generate_candidates", generate_candidates)
@@ -52,7 +81,6 @@ workflow.add_node("recommend_plan", recommend_plan)
 workflow.add_node("human_approval", human_approval)
 workflow.add_node("apply_plan", apply_plan)
 
-# Wire the exact sequence
 workflow.add_edge(START, "detect_disruption")
 workflow.add_edge("detect_disruption", "assess_impact")
 workflow.add_edge("assess_impact", "generate_candidates")
@@ -63,4 +91,4 @@ workflow.add_edge("recommend_plan", "human_approval")
 workflow.add_edge("human_approval", "apply_plan")
 workflow.add_edge("apply_plan", END)
 
-app = workflow.compile()
+app = workflow.compile(checkpointer=MemorySaver())

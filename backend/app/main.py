@@ -1,9 +1,12 @@
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any, List, Optional, cast
+from langgraph.types import Command
 from app.agents.graph import app as agent_graph
 from app.agents.state import AgentState
+from app.tools.terminal_tools import get_terminal_state as _get_terminal_state
 
 # --- 1. Server Initialization ---
 app = FastAPI(title="Port Disruption Recovery API")
@@ -44,8 +47,11 @@ class ApprovalRequest(BaseModel):
     plan_id: str
     approved: bool
 
-# Global memory store for hackathon MVP (replaces DB)
+# Global memory store for hackathon MVP (replaces DB).
+# active_thread_id ties this run to the LangGraph checkpoint so /approve
+# can resume the exact paused graph instead of starting a new one.
 active_run_state: Optional[AgentState] = None
+active_thread_id: Optional[str] = None
 
 # --- 3. API Routes (Matching Section 8) ---
 @app.post("/disruptions")
@@ -54,8 +60,8 @@ async def trigger_disruption(payload: DisruptionPayload):
     Triggers the LangGraph agent pipeline.
     Returns the structured envelope required by the frontend dashboard.
     """
-    global active_run_state
-    
+    global active_run_state, active_thread_id
+
     # Cast the initial dictionary to satisfy Pylance
     initial_state = cast(AgentState, {
         "status": "in_progress",
@@ -69,14 +75,24 @@ async def trigger_disruption(payload: DisruptionPayload):
         "final_explanation": None,
         "human_approval": None
     })
-    
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
     try:
-        # Execute LangGraph and cast the returned generic dict back to AgentState
-        raw_result = agent_graph.invoke(initial_state)
+        # This call will run through recommend_plan, then pause inside
+        # human_approval's interrupt() call. It returns immediately at that
+        # point — apply_plan has NOT run yet.
+        raw_result = agent_graph.invoke(initial_state, config=config)
         active_run_state = cast(AgentState, raw_result)
-        
+        active_thread_id = thread_id
+
+        is_paused = "__interrupt__" in raw_result
+        status = "awaiting_approval" if is_paused else active_run_state.get("status", "completed")
+
         return {
-            "status": active_run_state.get("status", "completed"),
+            "run_id": thread_id,
+            "status": status,
             "disruption_summary": active_run_state.get("disruption_summary"),
             "recommended_plan": active_run_state.get("recommended_plan"),
             "agent_steps": active_run_state.get("agent_steps", [])
@@ -87,25 +103,44 @@ async def trigger_disruption(payload: DisruptionPayload):
 @app.post("/approve")
 async def approve_plan(request: ApprovalRequest):
     """
-    Receives human authorization for a specific plan.
+    Resumes the paused LangGraph run at its human_approval interrupt,
+    which lets apply_plan actually run (or skip applying, if rejected).
     """
-    global active_run_state
-    
-    if active_run_state:
-        active_run_state["human_approval"] = request.approved
-        
+    global active_run_state, active_thread_id
+
+    if not active_thread_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No run is currently awaiting approval."
+        )
+
+    config = {"configurable": {"thread_id": active_thread_id}}
+
+    try:
+        raw_result = agent_graph.invoke(Command(resume=request.approved), config=config)
+        active_run_state = cast(AgentState, raw_result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")
+
     action_str = "approved" if request.approved else "rejected"
-    
+
     return {
-        "status": action_str,
+        "status": active_run_state.get("status", action_str),
         "plan_id": request.plan_id,
-        "message": f"Plan {request.plan_id} has been {action_str} by the duty planner."
+        "message": f"Plan {request.plan_id} has been {action_str} by the duty planner.",
+        "agent_steps": active_run_state.get("agent_steps", [])
     }
 
 @app.get("/terminal-state")
 async def get_terminal_state():
-    """Stub for getting current terminal data."""
-    return {"status": "ok", "message": "Terminal state data placeholder"}
+    """Returns the real current terminal state (berths, vessels, cranes)."""
+    try:
+        return _get_terminal_state()
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="scenarios/baseline.json not found — check the repo layout."
+        )
 
 @app.get("/plans")
 async def get_plans():
