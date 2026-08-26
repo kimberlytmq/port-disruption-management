@@ -5,6 +5,8 @@ from pathlib import Path
 import json
 from datetime import datetime, timedelta
 
+from app.models.schedule import ScheduleEntry
+
 # Same pattern as optimisation_tools.py: backend/app/tools/terminal_tools.py
 # -> parents[3] is the repo root, so this always finds scenarios/baseline.json
 # regardless of what directory the server was started from.
@@ -71,7 +73,16 @@ def apply_recovery_plan(plan: dict) -> dict:
     any call to /terminal-state after this will show the change directly.
     """
     state = get_terminal_state()
-    schedule = plan.get("schedule", [])
+    raw_schedule = plan.get("schedule", [])
+
+    # Validate every entry against the real ScheduleEntry model
+    # (app/models/schedule.py) before writing anything into the shared
+    # terminal state. This catches a malformed optimizer/plan output
+    # (missing field, bad datetime, wrong type) immediately with a clear
+    # error, instead of writing a broken entry into shared state that
+    # then confuses something downstream much later.
+    validated_entries = [ScheduleEntry(**entry) for entry in raw_schedule]
+    schedule = [entry.model_dump(mode="json") for entry in validated_entries]
 
     # Record the applied schedule directly on the terminal state.
     state["schedule"] = schedule
