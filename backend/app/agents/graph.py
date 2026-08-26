@@ -8,6 +8,7 @@ from .orchestrator import detect_disruption
 from .impact_agent import assess_impact
 from .planning_agent import generate_candidates
 from .recovery_agent import recommend_plan
+from app.tools.terminal_tools import apply_recovery_plan
 
 # --- New Placeholder Nodes ---
 def simulate_candidates(state: AgentState) -> AgentState:
@@ -25,9 +26,6 @@ def evaluate_candidates(state: AgentState) -> AgentState:
     return state
 
 def human_approval(state: AgentState) -> AgentState:
-    # Guarded because LangGraph re-runs this entire function from the top
-    # when resuming after interrupt() — without the guard this would log
-    # "awaiting approval" a second time on resume.
     steps = state.setdefault("agent_steps", [])
     if not steps or steps[-1]["step"] != "human_approval":
         steps.append({
@@ -35,17 +33,6 @@ def human_approval(state: AgentState) -> AgentState:
             "summary": "Awaiting human duty planner approval."
         })
 
-    # Note: any scalar field (like state["status"]) set here would NOT
-    # persist once interrupt() pauses execution — LangGraph only applies
-    # a node's field updates once the node actually returns. Only in-place
-    # mutations to already-shared mutable objects (like the agent_steps
-    # list above) survive a pause. main.py derives "awaiting_approval"
-    # itself from the presence of "__interrupt__" in the invoke() result.
-
-    # interrupt() actually halts the graph here. Execution will not continue
-    # past this line until something calls invoke(Command(resume=...))
-    # with the same thread_id. Whatever value is passed to resume becomes
-    # the return value of this call.
     decision = interrupt({
         "question": "Approve the recommended recovery plan?",
         "recommended_plan": state.get("recommended_plan"),
@@ -56,6 +43,9 @@ def human_approval(state: AgentState) -> AgentState:
 
 def apply_plan(state: AgentState) -> AgentState:
     if state.get("human_approval"):
+        plan = state.get("recommended_plan")
+        if plan:
+            apply_recovery_plan(plan)
         state.setdefault("agent_steps", []).append({
             "step": "apply_plan",
             "summary": "Plan approved by duty planner and applied to the terminal schedule."

@@ -63,6 +63,32 @@ def get_crane_availability() -> dict:
     return cranes
 
 
+def apply_recovery_plan(plan: dict) -> dict:
+    """
+    Applies an approved recovery plan to the live terminal state.
+
+    Mutates the SAME cached dict that get_terminal_state() returns, so
+    any call to /terminal-state after this will show the change directly.
+    """
+    state = get_terminal_state()
+    schedule = plan.get("schedule", [])
+
+    # Record the applied schedule directly on the terminal state.
+    state["schedule"] = schedule
+
+    # Update each vessel's assigned berth so a glance at /terminal-state
+    # shows where it actually ended up, not just the original baseline.
+    vessel_by_id = {v["id"]: v for v in state.get("vessels", [])}
+    for entry in schedule:
+        vessel = vessel_by_id.get(entry.get("vessel_id"))
+        if vessel:
+            vessel["assigned_berth"] = entry.get("berth_id")
+            vessel["scheduled_start"] = entry.get("start_time")
+            vessel["scheduled_end"] = entry.get("end_time")
+
+    return state
+
+
 def _parse_iso(value):
     """Safely parses an ISO datetime string; returns None if missing/invalid."""
     if not value:
