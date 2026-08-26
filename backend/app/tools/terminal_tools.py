@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import json
+from datetime import datetime, timedelta
 
 # Same pattern as optimisation_tools.py: backend/app/tools/terminal_tools.py
 # -> parents[3] is the repo root, so this always finds scenarios/baseline.json
@@ -62,16 +63,102 @@ def get_crane_availability() -> dict:
     return cranes
 
 
+def _parse_iso(value):
+    """Safely parses an ISO datetime string; returns None if missing/invalid."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def assess_disruption(event_payload: dict) -> dict:
     """
-    STUB: This is a placeholder tool for the Impact Agent.
-    TODO: Replace this dictionary with the actual API call 
-    to the terminal operating system simulator.
+    Determines which berths and vessels are plausibly affected by the
+    REAL disruption event(s) passed in, using the actual terminal data —
+    replacing the old stub that always returned the same hardcoded answer
+    no matter what event it was given.
+
+    event_payload is the full {"scenario": ..., "events": [...]} shape
+    (see specs.md section 7/8), since that's what the Impact Agent passes
+    in directly from state["disruption_event"].
     """
-    print("🔧 TOOL CALLED: assess_disruption (Using mock data)")
-    
+    state = get_terminal_state()
+    all_vessels = state.get("vessels", [])
+    all_berths = get_berth_schedule()
+
+    affected_berths: set[str] = set()
+    delayed_downstream_vessels: set[str] = set()
+    yard_congestion_warning = False
+
+    for event in event_payload.get("events", []):
+        event_type = event.get("type")
+
+        if event_type == "VESSEL_DELAY":
+            vessel_id = event.get("vessel_id")
+            vessel = get_vessel(vessel_id) if vessel_id else None
+            if not vessel:
+                continue
+
+            # Any berth physically long enough to take this vessel is a
+            # candidate for disruption, since we don't have a fixed
+            # vessel->berth assignment stored anywhere (the optimizer
+            # decides that dynamically, not the static terminal data).
+            for berth in all_berths:
+                if berth["length"] >= vessel["length"]:
+                    affected_berths.add(berth["id"])
+
+            # Downstream vessels: anything else whose ETA falls inside
+            # the gap this delay just opened up (old ETA -> new ETA) is
+            # a vessel whose plans now overlap with this one's.
+            old_eta = _parse_iso(event.get("old_eta")) or _parse_iso(vessel.get("eta"))
+            new_eta = _parse_iso(event.get("new_eta"))
+            if new_eta is None and old_eta and event.get("delay_hours") is not None:
+                new_eta = old_eta + timedelta(hours=event["delay_hours"])
+
+            if old_eta and new_eta:
+                for other in all_vessels:
+                    if other["id"] == vessel_id:
+                        continue
+                    other_eta = _parse_iso(other.get("eta"))
+                    if other_eta and old_eta <= other_eta <= new_eta:
+                        delayed_downstream_vessels.add(other["id"])
+
+        elif event_type == "CRANE_FAILURE":
+            crane_id = event.get("crane_id")
+            crane_info = get_crane_availability().get(crane_id) if crane_id else None
+            if not crane_info:
+                continue
+
+            affected_berth_id = crane_info["berth_id"]
+            affected_berths.add(affected_berth_id)
+            affected_berth = next((b for b in all_berths if b["id"] == affected_berth_id), None)
+
+            # Downstream vessels: anything compatible with the affected
+            # berth whose ETA falls between the failure and its expected
+            # repair time — they're the ones that could actually be
+            # waiting on this specific crane.
+            failure_time = _parse_iso(event.get("time"))
+            repair_time = _parse_iso(event.get("expected_repair_time"))
+            if affected_berth and failure_time and repair_time:
+                for vessel in all_vessels:
+                    vessel_eta = _parse_iso(vessel.get("eta"))
+                    if (
+                        vessel_eta
+                        and failure_time <= vessel_eta <= repair_time
+                        and vessel["length"] <= affected_berth["length"]
+                    ):
+                        delayed_downstream_vessels.add(vessel["id"])
+
+        elif event_type == "YARD_CONGESTION":
+            # Known gap (see specs.md section 7): there's no real yard
+            # capacity model in this terminal yet, so this just raises
+            # the flag rather than inventing berth/vessel specifics.
+            yard_congestion_warning = True
+
     return {
-        "affected_berths": ["B01"],
-        "delayed_downstream_vessels": ["VESSEL_B"],
-        "yard_congestion_warning": True
+        "affected_berths": sorted(affected_berths),
+        "delayed_downstream_vessels": sorted(delayed_downstream_vessels),
+        "yard_congestion_warning": yard_congestion_warning,
     }
