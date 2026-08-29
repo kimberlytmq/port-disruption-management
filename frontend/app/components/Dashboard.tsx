@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ScenarioData, ScenarioId } from "@/lib/types";
-import { SCENARIOS } from "@/lib/scenarios";
-import { loadScenario } from "@/lib/api";
-import { diffVessels } from "@/lib/derive";
+import { SCENARIOS, BASELINE_PLAN } from "@/lib/scenarios";
+import { loadScenario, getAppliedSchedule } from "@/lib/api";
+import { diffVessels, deriveVesselPositions, summarizeDisruption, toDisplaySteps } from "@/lib/derive";
+import type { AgentStep, RawAgentStep, VesselPosition } from "@/lib/types";
 import { ScenarioTrigger } from "./ScenarioTrigger";
 import { ImpactNarration } from "./ImpactNarration";
 import { DisruptionAlert } from "./DisruptionAlert";
@@ -14,14 +15,6 @@ import { ActivityFeed } from "./ActivityFeed";
 import { TerminalHealth } from "./TerminalHealth";
 import styles from "../page.module.css";
 
-// The playback sequence for a triggered scenario:
-//   loading      -> fetching (or falling back to) the real data
-//   impact       -> narrate why this is a problem, map still shows the
-//                   unresolved (baseline) layout with fault flags
-//   considering  -> agent activity starts revealing; map briefly ghosts an
-//                   alternative plan the agent looked at and rejected
-//   settled      -> map animates to the real recommended layout
-//   result       -> recommendation + Approve/Reject appear
 type Phase = "idle" | "loading" | "impact" | "considering" | "settled" | "result";
 
 const BEAT_MS = 1600;
@@ -34,6 +27,8 @@ export function Dashboard() {
   const [source, setSource] = useState<"live" | "fallback">("fallback");
   const [phase, setPhase] = useState<Phase>("idle");
   const [runId, setRunId] = useState(0);
+  const [appliedVessels, setAppliedVessels] = useState<VesselPosition[] | null>(null);
+  const [freshAgentSteps, setFreshAgentSteps] = useState<RawAgentStep[] | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   function clearTimers() {
@@ -46,6 +41,8 @@ export function Dashboard() {
     clearTimers();
     setScenarioId(id);
     setPhase("loading");
+    setAppliedVessels(null);
+    setFreshAgentSteps(null);
 
     const result = await loadScenario(id);
     setScenario(result.data);
@@ -64,11 +61,26 @@ export function Dashboard() {
     setScenarioId("baseline");
     setScenario(SCENARIOS.baseline);
     setPhase("idle");
+    setAppliedVessels(null);
+    setFreshAgentSteps(null);
+  }
+
+  async function handleDecided(approved: boolean, freshSteps?: RawAgentStep[]) {
+    if (freshSteps) setFreshAgentSteps(freshSteps);
+    if (source !== "live" || !scenario.payload) return;
+    const schedule = await getAppliedSchedule();
+    if (!schedule) {
+      setAppliedVessels(scenario.problemVessels);
+      return;
+    }
+    const { delayedHours } = summarizeDisruption(scenario.payload.events, scenario.berths);
+    setAppliedVessels(deriveVesselPositions(schedule, delayedHours, BASELINE_PLAN.schedule));
   }
 
   const isBaseline = scenarioId === "baseline";
   const isResolved = phase === "settled" || phase === "result";
-  const mapVessels = isResolved ? scenario.resolvedVessels : scenario.problemVessels;
+  const mapVessels = appliedVessels ?? (isResolved ? scenario.resolvedVessels : scenario.problemVessels);
+  const displaySteps: AgentStep[] = freshAgentSteps ? toDisplaySteps(freshAgentSteps) : scenario.agentSteps;
   const ghostDiff = scenario.ghostVessels ? diffVessels(scenario.ghostVessels, scenario.problemVessels) : [];
   const showGhost = phase === "considering" && ghostDiff.length > 0 ? ghostDiff : null;
   const hasPlan = phase === "result" && scenario.candidatePlans.length > 0 && scenario.recommendedPlanId !== null;
@@ -102,7 +114,13 @@ export function Dashboard() {
 
       {!isBaseline && phase !== "loading" && <ImpactNarration key={`impact-${runId}`} beats={scenario.consequenceBeats} />}
 
-      <TerminalMap berths={scenario.berths} vessels={mapVessels} craneAlert={scenario.craneAlert} ghostVessels={showGhost} />
+      <TerminalMap
+        berths={scenario.berths}
+        vessels={mapVessels}
+        craneAlert={scenario.craneAlert}
+        ghostVessels={showGhost}
+        applied={appliedVessels !== null}
+      />
 
       <div className={styles.grid}>
         <div>
@@ -116,6 +134,7 @@ export function Dashboard() {
               baselineKpis={scenario.baselineKpis}
               actionSentence={scenario.actionSentence}
               live={source === "live"}
+              onDecided={handleDecided}
             />
           ) : isBaseline ? (
             <TerminalHealth kpis={scenario.baselineKpis} />
@@ -131,7 +150,7 @@ export function Dashboard() {
           ) : phase === "loading" || phase === "impact" ? (
             <div className={styles.thinking}>Explaining the disruption first…</div>
           ) : (
-            <ActivityFeed key={`feed-${runId}`} steps={scenario.agentSteps} />
+            <ActivityFeed key={`feed-${runId}`} steps={displaySteps} />
           )}
         </div>
       </div>

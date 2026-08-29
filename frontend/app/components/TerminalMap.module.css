@@ -43,6 +43,8 @@
 
 .lDelay { background: var(--critical); }
 .lIdle { background: var(--ship-idle); }
+.lShift { background: var(--navy); }
+.lApplied { background: var(--good); }
 .lBerth { background: var(--pier); }
 
 .map {
@@ -152,6 +154,16 @@
   color: var(--critical);
 }
 
+.shipTagShift {
+  color: var(--navy);
+  background: #e8eef3;
+}
+
+.shipTagApplied {
+  color: var(--good);
+  background: var(--good-soft);
+}
+
 .hull {
   width: 78px;
   height: 30px;
@@ -172,6 +184,8 @@
 
 .hullIdle { background: var(--ship-idle); }
 .hullFlagged { background: var(--navy); }
+.hullShift { background: var(--navy); }
+.hullApplied { background: var(--good); }
 
 .shipDocked {
   bottom: 84px;

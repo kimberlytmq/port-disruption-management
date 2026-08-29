@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { PlanKpis, RecoveryPlan } from "@/lib/types";
+import type { PlanKpis, RawAgentStep, RecoveryPlan } from "@/lib/types";
 import { PLAN_LABELS } from "@/lib/scenarios";
 import { approvePlan } from "@/lib/api";
 import styles from "./RecoveryPlans.module.css";
@@ -10,7 +10,6 @@ function planRationale(plan: RecoveryPlan): string {
   return PLAN_LABELS[plan.plan_id] ?? plan.description;
 }
 
-// Lower wait / crane idle is better; higher berth utilization is better.
 function delta(baseline: number, value: number, lowerIsBetter: boolean): { text: string; positive: boolean } {
   const diff = Math.round((value - baseline) * 10) / 10;
   const positive = lowerIsBetter ? diff <= 0 : diff >= 0;
@@ -34,6 +33,7 @@ export function RecoveryPlans({
   baselineKpis,
   actionSentence,
   live,
+  onDecided,
 }: {
   candidatePlans: RecoveryPlan[];
   planKpis: Record<string, PlanKpis>;
@@ -41,6 +41,7 @@ export function RecoveryPlans({
   baselineKpis: PlanKpis;
   actionSentence: string | null;
   live: boolean;
+  onDecided?: (approved: boolean, freshSteps?: RawAgentStep[]) => void;
 }) {
   const [decision, setDecision] = useState<"pending" | "approved" | "rejected">("pending");
   const recommended = candidatePlans.find((p) => p.plan_id === recommendedPlanId);
@@ -48,14 +49,17 @@ export function RecoveryPlans({
 
   async function decide(approved: boolean) {
     setDecision(approved ? "approved" : "rejected");
+    let freshSteps: RawAgentStep[] | undefined;
     if (live && recommended) {
       try {
-        await approvePlan(recommended.plan_id, approved);
+        const result = await approvePlan(recommended.plan_id, approved);
+        freshSteps = result.agent_steps;
       } catch {
         // Live approval is best-effort — the decision still reflects locally
         // even if the backend call fails (e.g. it went offline mid-demo).
       }
     }
+    onDecided?.(approved, freshSteps);
   }
 
   return (
