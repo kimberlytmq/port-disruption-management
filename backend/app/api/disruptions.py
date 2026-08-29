@@ -1,5 +1,6 @@
 """Disruption API routes."""
 import uuid
+from app.tools.terminal_tools import reset_applied_schedule
 from typing import List, Optional, cast
 
 from fastapi import APIRouter, HTTPException
@@ -49,6 +50,7 @@ async def trigger_disruption(payload: DisruptionPayload):
     Triggers the LangGraph agent pipeline.
     Returns the structured envelope required by the frontend dashboard.
     """
+    reset_applied_schedule()
     initial_state = cast(AgentState, {
         "status": "in_progress",
         "disruption_summary": f"Processing {len(payload.events)} disruption event(s)...",

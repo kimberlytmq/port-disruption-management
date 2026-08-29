@@ -53,6 +53,11 @@ export interface VesselPosition {
   // 0 = the current occupant (docked/delayed), 1+ = waiting in line for the
   // same berth once it frees up.
   queueIndex: number;
+  // Clock time of this vessel's slot in the schedule being shown.
+  start_label?: string;
+  // Vs. the baseline schedule, e.g. "+3h 15m". Omitted when the slot didn't
+  // move (or the vessel is already tagged as delayed by the disruption).
+  shift_label?: string;
 }
 
 export interface CraneAlert {

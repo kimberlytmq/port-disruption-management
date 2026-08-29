@@ -7,18 +7,34 @@ function berthPosition(index: number, count: number): string {
   return `${margin + (span * (index + 0.5)) / count}%`;
 }
 
+function vesselLabel(vessel: VesselPosition): string {
+  if (vessel.status === "delayed") {
+    return `+${vessel.delay_hours}h`;
+  }
+  if (vessel.shift_label) {
+    return vessel.start_label ? `${vessel.shift_label} · ${vessel.start_label}` : vessel.shift_label;
+  }
+  if (vessel.status === "queued") {
+    return vessel.start_label ? `queued · ${vessel.start_label}` : `queued for ${vessel.berth_id}`;
+  }
+  return vessel.start_label ? `docked · ${vessel.start_label}` : "docked";
+}
+
 export function TerminalMap({
   berths,
   vessels,
   craneAlert,
   ghostVessels,
+  applied = false,
 }: {
   berths: Berth[];
   vessels: VesselPosition[];
   craneAlert: CraneAlert | null;
   ghostVessels?: VesselPosition[] | null;
+  applied?: boolean;
 }) {
   const positions = new Map(berths.map((berth, i) => [berth.id, berthPosition(i, berths.length)]));
+  const hasShift = vessels.some((v) => v.shift_label);
 
   return (
     <div className={styles.card}>
@@ -27,6 +43,12 @@ export function TerminalMap({
         <div className={styles.legend}>
           <span><i className={styles.lDelay} />Delayed</span>
           <span><i className={styles.lIdle} />Docked / queued</span>
+          {hasShift && (
+            <span>
+              <i className={applied ? styles.lApplied : styles.lShift} />
+              {applied ? "Applied change" : "Plan change"}
+            </span>
+          )}
           <span><i className={styles.lBerth} />Berth</span>
         </div>
       </div>
@@ -56,13 +78,23 @@ export function TerminalMap({
           const left = positions.get(vessel.berth_id);
           const motionClass =
             vessel.status === "docked" ? styles.shipDocked : vessel.status === "queued" ? styles.shipQueued : styles.shipDelayed;
-          const label =
-            vessel.status === "docked"
-              ? "docked"
-              : vessel.status === "queued"
-                ? `queued for ${vessel.berth_id}`
-                : `+${vessel.delay_hours}h`;
+          const label = vesselLabel(vessel);
+          const shifted = Boolean(vessel.shift_label);
           const bottomOffset = vessel.status === "queued" ? 150 + (vessel.queueIndex - 1) * 46 : undefined;
+          const tagClass = [
+            styles.shipTag,
+            vessel.status === "delayed" ? styles.shipTagFlagged : "",
+            shifted ? (applied ? styles.shipTagApplied : styles.shipTagShift) : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const hullClass = [
+            styles.hull,
+            vessel.status === "delayed" ? styles.hullFlagged : styles.hullIdle,
+            shifted ? (applied ? styles.hullApplied : styles.hullShift) : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
 
           return (
             <div
@@ -70,10 +102,10 @@ export function TerminalMap({
               className={`${styles.ship} ${motionClass}`}
               style={{ left, bottom: bottomOffset }}
             >
-              <div className={`${styles.shipTag} ${vessel.status === "delayed" ? styles.shipTagFlagged : ""}`}>
+              <div className={tagClass}>
                 {vessel.vessel_id} · {label}
               </div>
-              <div className={`${styles.hull} ${vessel.status === "delayed" ? styles.hullFlagged : styles.hullIdle}`} />
+              <div className={hullClass} />
             </div>
           );
         })}

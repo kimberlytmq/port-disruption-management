@@ -1,4 +1,4 @@
-import type { DisruptionPayload, PlanKpis, RawAgentStep, RecoveryPlan, ScenarioData, ScenarioId } from "./types";
+import type { DisruptionPayload, PlanKpis, RawAgentStep, RecoveryPlan, ScenarioData, ScenarioId, ScheduleEntry } from "./types";
 import { consequenceBeats, deriveVesselPositions, describeAction, summarizeDisruption, toDisplaySteps } from "./derive";
 import { BASELINE_PLAN, SCENARIOS } from "./scenarios";
 
@@ -15,6 +15,19 @@ interface PlansResponse {
   candidate_plans: RecoveryPlan[];
   plan_kpis?: Record<string, PlanKpis>;
   recommended_plan: RecoveryPlan | null;
+}
+
+interface TerminalStateResponse {
+  berths: unknown[];
+  vessels: unknown[];
+  schedule?: ScheduleEntry[];
+}
+
+interface ApproveResponse {
+  status: string;
+  plan_id: string;
+  message: string;
+  agent_steps: RawAgentStep[];
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -34,13 +47,18 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export function approvePlan(planId: string, approved: boolean) {
-  return postJson(`/approve`, { plan_id: planId, approved });
+  return postJson<ApproveResponse>(`/approve`, { plan_id: planId, approved });
 }
 
-// Runs a scenario against the real backend (POST /disruptions, then
-// GET /plans for KPIs) and reshapes the response into a ScenarioData, using
-// the exact same derive.ts helpers the precomputed fallback uses — so the
-// rest of the UI can't tell live and fallback data apart.
+export async function getAppliedSchedule(): Promise<ScheduleEntry[] | null> {
+  try {
+    const state = await getJson<TerminalStateResponse>("/terminal-state");
+    return state.schedule && state.schedule.length > 0 ? state.schedule : null;
+  } catch {
+    return null;
+  }
+}
+
 async function runLive(id: Exclude<ScenarioId, "baseline">, payload: DisruptionPayload): Promise<ScenarioData> {
   const berths = SCENARIOS[id].berths;
   const { disruption, craneAlert, delayedHours } = summarizeDisruption(payload.events, berths);
@@ -60,8 +78,8 @@ async function runLive(id: Exclude<ScenarioId, "baseline">, payload: DisruptionP
     payload,
     berths,
     problemVessels: deriveVesselPositions(BASELINE_PLAN.schedule, delayedHours),
-    resolvedVessels: deriveVesselPositions(recommended.schedule, delayedHours),
-    ghostVessels: alternative ? deriveVesselPositions(alternative.schedule, delayedHours) : null,
+    resolvedVessels: deriveVesselPositions(recommended.schedule, delayedHours, BASELINE_PLAN.schedule),
+    ghostVessels: alternative ? deriveVesselPositions(alternative.schedule, delayedHours, BASELINE_PLAN.schedule) : null,
     craneAlert,
     agentSteps: toDisplaySteps(disruptionsResult.agent_steps),
     candidatePlans,
@@ -73,10 +91,6 @@ async function runLive(id: Exclude<ScenarioId, "baseline">, payload: DisruptionP
   };
 }
 
-// Tries the live backend first; falls back to the precomputed real-optimizer
-// data in lib/scenarios.ts (see its header comment) if the backend is
-// unreachable or errors (e.g. GROQ_API_KEY not configured locally). Returns
-// which source was used so the UI can say so.
 export async function loadScenario(id: ScenarioId): Promise<{ data: ScenarioData; source: "live" | "fallback" }> {
   if (id === "baseline") {
     return { data: SCENARIOS.baseline, source: "fallback" };

@@ -17,17 +17,22 @@ const STEP_STATE: Record<string, AgentStepState> = {
   simulate_candidates: "done",
   evaluate_candidates: "done",
   recommend_plan: "done",
-  human_approval: "active",
-  apply_plan: "pending",
 };
 
-// The real backend graph (specs.md §4) runs synchronously to completion in
-// one request — human_approval doesn't actually block, so by the time a
-// response comes back every step already ran. We still want the UI to wait
-// for a real click, so human_approval/apply_plan are always shown as
-// active/pending here regardless of what the backend already logged.
+// human_approval is "active" only while still waiting — i.e. apply_plan has
+// not shown up in the raw steps yet. Once it has, both that gate and the
+// apply step are "done".
 export function toDisplaySteps(rawSteps: RawAgentStep[]): AgentStep[] {
-  return rawSteps.map((s) => ({ ...s, state: STEP_STATE[s.step] ?? "done" }));
+  const decided = rawSteps.some((s) => s.step === "apply_plan");
+  return rawSteps.map((s) => {
+    if (s.step === "human_approval") {
+      return { ...s, state: decided ? "done" : "active" };
+    }
+    if (s.step === "apply_plan") {
+      return { ...s, state: "done" };
+    }
+    return { ...s, state: STEP_STATE[s.step] ?? "done" };
+  });
 }
 
 function hoursBetween(a: string, b: string): number {
@@ -39,6 +44,18 @@ function timeOf(iso: string | undefined): string {
   return iso ? iso.slice(11, 16) : "--:--";
 }
 
+function formatTimeOnDay(iso: string, referenceDate: string): string {
+  const time = timeOf(iso);
+  return iso.slice(0, 10) === referenceDate ? time : `${time} next day`;
+}
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 export function findBerthForCrane(berths: Berth[], craneId: string): Berth | undefined {
   return berths.find((b) => b.cranes.includes(craneId));
 }
@@ -47,7 +64,14 @@ export function findBerthForCrane(berths: Berth[], craneId: string): Berth | und
 // earliest-starting vessel on a berth is the current occupant (docked, or
 // delayed if it's the disrupted vessel); anyone scheduled after it on the
 // same berth is queued, waiting for that berth to free up.
-export function deriveVesselPositions(schedule: ScheduleEntry[], delayedHours: Record<string, number>): VesselPosition[] {
+//
+// Pass `baseline` (normal-ops schedule) to tag vessels whose slot moved —
+// that's how the map can show "push back 3h 15m" without a timeline.
+export function deriveVesselPositions(
+  schedule: ScheduleEntry[],
+  delayedHours: Record<string, number>,
+  baseline?: ScheduleEntry[],
+): VesselPosition[] {
   const byBerth = new Map<string, ScheduleEntry[]>();
   for (const entry of schedule) {
     const list = byBerth.get(entry.berth_id) ?? [];
@@ -55,17 +79,35 @@ export function deriveVesselPositions(schedule: ScheduleEntry[], delayedHours: R
     byBerth.set(entry.berth_id, list);
   }
 
+  const baselineById = baseline ? new Map(baseline.map((entry) => [entry.vessel_id, entry])) : null;
+  const referenceDate = (baseline ?? schedule)[0]?.start_time.slice(0, 10) ?? "";
+
   const positions: VesselPosition[] = [];
   for (const entries of byBerth.values()) {
     const sorted = [...entries].sort((a, b) => a.start_time.localeCompare(b.start_time));
     sorted.forEach((entry, i) => {
       const delay = delayedHours[entry.vessel_id];
+      let shift_label: string | undefined;
+      if (baselineById && !delay) {
+        const before = baselineById.get(entry.vessel_id);
+        if (before) {
+          const minutesDelta = Math.round(
+            (new Date(entry.start_time).getTime() - new Date(before.start_time).getTime()) / 60_000,
+          );
+          if (Math.abs(minutesDelta) >= 15) {
+            const sign = minutesDelta > 0 ? "+" : "−";
+            shift_label = `${sign}${formatDuration(Math.abs(minutesDelta))}`;
+          }
+        }
+      }
       positions.push({
         vessel_id: entry.vessel_id,
         berth_id: entry.berth_id,
         status: i === 0 ? (delay ? "delayed" : "docked") : "queued",
         delay_hours: delay,
         queueIndex: i,
+        start_label: entry.start_time ? formatTimeOnDay(entry.start_time, referenceDate) : undefined,
+        shift_label,
       });
     });
   }
@@ -182,18 +224,6 @@ export function consequenceBeats(events: DisruptionEvent[], berths: Berth[]): st
     beats.push("That delay lands right on top of the schedule already built for every other vessel.");
   }
   return beats;
-}
-
-function formatTimeOnDay(iso: string, referenceDate: string): string {
-  const time = timeOf(iso);
-  return iso.slice(0, 10) === referenceDate ? time : `${time} next day`;
-}
-
-function formatDuration(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 // The recommendation, phrased as an instruction a duty planner could act on,

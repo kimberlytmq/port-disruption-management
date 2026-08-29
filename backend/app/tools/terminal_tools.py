@@ -64,6 +64,13 @@ def get_crane_availability() -> dict:
             cranes[crane_id] = {"berth_id": berth["id"], "status": "available"}
     return cranes
 
+def reset_applied_schedule() -> None:
+    state = get_terminal_state()
+    state.pop("schedule", None)
+    for vessel in state.get("vessels", []):
+        vessel.pop("assigned_berth", None)
+        vessel.pop("scheduled_start", None)
+        vessel.pop("scheduled_end", None)
 
 def apply_recovery_plan(plan: dict) -> dict:
     """
